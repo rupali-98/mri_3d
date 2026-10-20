@@ -1,0 +1,6 @@
+# Per-machine settings for the hippo scripts.
+# Copy to hippo.conf (in the project root) or ~/.hippo.conf and edit.
+# Command-line flags and the HIPPO_DATA_DIR environment variable override this file.
+
+# Folder containing Task04_Hippocampus/ and splits.json
+data-dir = data

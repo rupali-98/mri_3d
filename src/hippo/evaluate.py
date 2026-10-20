@@ -8,7 +8,6 @@ Usage:
 """
 from __future__ import annotations
 
-import argparse
 import csv
 import json
 from pathlib import Path
@@ -18,6 +17,7 @@ import torch
 import yaml
 from monai.data import DataLoader, Dataset
 
+from . import defaults
 from .data import eval_transforms
 from .metrics import case_metrics
 from .model import build_model
@@ -25,9 +25,11 @@ from .train import spacing_from_affine
 
 
 @torch.no_grad()
-def main(run_dir: str, split: str = "test") -> dict:
+def main(run_dir: str, split: str = "test", data_dir: str | None = None) -> dict:
     run = Path(run_dir)
     cfg = yaml.safe_load((run / "config.yaml").read_text())
+    if data_dir is not None:  # otherwise use the data the run was trained on
+        cfg["data"]["split_file"] = str(Path(data_dir) / defaults.SPLIT_FILENAME)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = build_model(cfg).to(device)
@@ -60,8 +62,10 @@ def main(run_dir: str, split: str = "test") -> dict:
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser()
-    p.add_argument("--run", default="runs/baseline")
+    p = defaults.make_parser("Evaluate a trained model on a held-out split.")
+    p.add_argument("--run", default=defaults.RUN_DIR)
     p.add_argument("--split", default="test", choices=["train", "val", "test"])
+    # Without --data-dir / HIPPO_DATA_DIR / hippo.conf, use the location saved in the run.
+    p.set_defaults(data_dir=None)
     a = p.parse_args()
-    main(a.run, a.split)
+    main(a.run, a.split, a.data_dir)

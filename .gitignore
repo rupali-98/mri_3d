@@ -1,7 +1,12 @@
 data/
 runs/
 mlruns/
+mlartifacts/
+*.db
+*.log
+.ipynb_checkpoints/
 __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+hippo.conf

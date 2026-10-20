@@ -1,7 +1,6 @@
 """Dataset download, patient-level splits and MONAI data loaders."""
 from __future__ import annotations
 
-import argparse
 import json
 import random
 import tarfile
@@ -23,6 +22,8 @@ from monai.transforms import (
     RandScaleIntensityd,
     RandShiftIntensityd,
 )
+
+from . import defaults
 
 # Public mirror used by the MONAI tutorials (CC-BY-SA 4.0 data).
 MSD_URL = "https://msd-for-monai.s3-us-west-2.amazonaws.com/Task04_Hippocampus.tar"
@@ -135,11 +136,10 @@ def _pad_collate(batch):
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="Download MSD Task04 and create splits.")
-    p.add_argument("--data-dir", default="data")
+    p = defaults.make_parser("Download MSD Task04 and create splits.")
     p.add_argument("--val-fraction", type=float, default=0.15)
     p.add_argument("--test-fraction", type=float, default=0.15)
     p.add_argument("--seed", type=int, default=42)
     a = p.parse_args()
     root = download(Path(a.data_dir))
-    make_splits(root, Path(a.data_dir) / "splits.json", a.val_fraction, a.test_fraction, a.seed)
+    make_splits(root, Path(a.data_dir) / defaults.SPLIT_FILENAME, a.val_fraction, a.test_fraction, a.seed)

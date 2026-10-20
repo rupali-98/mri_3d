@@ -1,0 +1,6 @@
+# Light environment for the 3D viewer (python -m hippo.render3d), e.g. in WSL with a screen.
+# No PyTorch needed; make prediction files in Docker with hippo.visualize --save-nifti.
+numpy==2.4.6
+nibabel==5.4.2
+configargparse==1.8.0
+vedo==2026.6.1

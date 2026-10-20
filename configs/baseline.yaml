@@ -1,9 +1,9 @@
 # Baseline 3D U-Net for MSD Task04 (hippocampus, T1 MRI, 1 mm isotropic crops).
 # Labels: 0 = background, 1 = anterior hippocampus, 2 = posterior hippocampus.
 
+# The dataset location is a per-machine setting, not part of the experiment:
+# set it with --data-dir, HIPPO_DATA_DIR or hippo.conf (see src/hippo/defaults.py).
 data:
-  root: data/Task04_Hippocampus        # folder containing dataset.json
-  split_file: data/splits.json
   val_fraction: 0.15
   test_fraction: 0.15
   num_workers: 2
@@ -24,6 +24,7 @@ train:
   val_every: 5
   amp: true                             # mixed precision, only used on CUDA
   out_dir: runs/baseline
+  min_free_disk_gb: 5                   # refuse to start below this; a full disk killed an earlier run
 
 eval:
   nsd_tolerance_mm: 1.0                 # same tolerance as the MSD challenge for this task

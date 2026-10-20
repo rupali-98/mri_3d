@@ -29,11 +29,22 @@ pip install -r requirements.txt
 # Optional on NVIDIA GPUs: install the CUDA build of PyTorch from pytorch.org first.
 
 export PYTHONPATH=src                                  # Windows PowerShell: $env:PYTHONPATH="src"
-python -m hippo.data --data-dir data                   # downloads ~30 MB and writes data/splits.json
+python -m hippo.data                                   # downloads ~30 MB and writes data/splits.json
 python -m hippo.train --config configs/baseline.yaml   # add --epochs 5 for a quick check
 python -m hippo.evaluate --run runs/baseline
 mlflow ui                                              # browse runs at http://127.0.0.1:5000
 ```
+
+### Dataset location
+
+By default the data goes in `./data`. To keep it elsewhere, set the location once instead of passing it to every command. All scripts use the first of these that is set:
+
+1. `--data-dir /path/to/data` on the command line
+2. the `HIPPO_DATA_DIR` environment variable
+3. `data-dir = /path/to/data` in `hippo.conf` (project root) or `~/.hippo.conf`; copy `hippo.conf.example` to start
+4. the default in `src/hippo/defaults.py`
+
+`train` saves the location it used into the run folder, so `evaluate` finds the same data without being told.
 
 Outputs in `runs/baseline/`: `best.pt`, `history.json`, `metrics_test.csv` (one row per case: Dice, NSD, predicted and true volume in ml) and `summary_test.json` (mean, median, std).
 
@@ -56,7 +67,8 @@ The tests check the metrics on hand-made cases and run the whole pipeline (split
 ## Structure
 
 ```
-configs/baseline.yaml   all settings
+configs/baseline.yaml   experiment settings
+src/hippo/defaults.py   default paths, shared command-line options
 src/hippo/data.py       download, splits, transforms, loaders
 src/hippo/model.py      3D U-Net (MONAI)
 src/hippo/metrics.py    Dice, NSD, volumes
