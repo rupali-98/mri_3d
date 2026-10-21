@@ -26,5 +26,14 @@ train:
   out_dir: runs/baseline
   min_free_disk_gb: 5                   # refuse to start below this; a full disk killed an earlier run
 
+qc:                                     # data exploration / quality checks (python -m hippo.explore)
+  outlier_z: 3.5                        # robust z (median/MAD) beyond which a volume, ratio or contrast is flagged
+  max_pieces: 1                         # a label part split into more pieces than this is flagged
+  intensity_gap_decades: 0.5            # scans whose intensity scales are >=10^0.5 (~3x) apart form separate groups
+
+clean:                                  # data cleaning (python -m hippo.clean, after hippo.explore)
+  min_piece_voxels: 10                  # label pieces smaller than this (besides the main one) become background
+  exclude: []                           # case names to leave out, e.g. [hippocampus_221]
+
 eval:
   nsd_tolerance_mm: 1.0                 # same tolerance as the MSD challenge for this task
