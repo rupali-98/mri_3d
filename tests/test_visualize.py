@@ -25,7 +25,7 @@ def test_visualize_label_prediction_and_unlabelled(tmp_path):
     torch.save(build_model(cfg).state_dict(), run / "best.pt")
 
     out = tmp_path / "with_label.png"
-    vols = visualize.main(str(image), str(label), run=str(run), out=str(out), montage_step=3, save_nifti=True)
+    vols = visualize.main(str(image), str(label), runs=str(run), out=str(out), montage_step=3, save_nifti=True)
     assert out.stat().st_size > 0
     assert (tmp_path / "with_label_sagittal.png").stat().st_size > 0
     pred = nib.load(tmp_path / "with_label_pred.nii.gz")
@@ -38,6 +38,35 @@ def test_visualize_label_prediction_and_unlabelled(tmp_path):
     out = tmp_path / "unlabelled.png"
     assert visualize.main(str(image), out=str(out)) == {}
     assert out.stat().st_size > 0
+
+
+def test_visualize_compares_runs(tmp_path, monkeypatch):
+    task = make_fake_msd(tmp_path / "data", n=1)
+    image = task / "imagesTr" / "hippocampus_000.nii.gz"
+    label = task / "labelsTr" / "hippocampus_000.nii.gz"
+    cfg = yaml.safe_load(open("configs/baseline.yaml"))
+    cfg["model"]["channels"] = [8, 16, 32, 64]
+    for name, normalize in [("zscored", "zscore"), ("raw", "none")]:
+        run = tmp_path / name
+        run.mkdir()
+        (run / "config.yaml").write_text(yaml.safe_dump({**cfg, "data": {**cfg["data"], "normalize": normalize}}))
+        torch.save(build_model(cfg).state_dict(), run / "best.pt")
+
+    # record the intensities each run's model is given
+    seen, real_predict = {}, visualize.predict
+
+    def recording_predict(run, x):
+        seen[run.name] = float(x.max())
+        return real_predict(run, x)
+
+    monkeypatch.setattr(visualize, "predict", recording_predict)
+
+    vols = visualize.main(str(image), str(label), runs=[str(tmp_path / "zscored"), str(tmp_path / "raw")],
+                          out=str(tmp_path / "cmp.png"), save_nifti=True)
+    assert list(vols) == ["ground truth", "zscored", "raw"]
+    raw_max = float(np.asarray(nib.load(image).dataobj).max())
+    assert np.isclose(seen["raw"], raw_max) and seen["zscored"] < raw_max  # each run gets its own preprocessing
+    assert (tmp_path / "cmp_pred_zscored.nii.gz").exists() and (tmp_path / "cmp_pred_raw.nii.gz").exists()
 
 
 def test_visualize_html(tmp_path):
