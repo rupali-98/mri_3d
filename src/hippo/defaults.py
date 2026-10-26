@@ -38,6 +38,17 @@ def make_parser(description: str | None = None) -> configargparse.ArgParser:
     return p
 
 
+def pick_device():
+    """NVIDIA GPU, then Apple GPU (MPS, native macOS only, not inside Docker), then CPU."""
+    import torch
+
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
 def find_case(name: str, data_dir: str) -> tuple[Path, Path | None]:
     """Locate a case by name in the MSD folders; labels exist only for imagesTr."""
     task = Path(data_dir) / "Task04_Hippocampus"

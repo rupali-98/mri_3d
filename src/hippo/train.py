@@ -20,7 +20,7 @@ from monai.losses import DiceCELoss
 from monai.utils import set_determinism
 
 from . import defaults
-from .data import make_loaders
+from .data import make_loaders, use_clean_labels
 from .metrics import case_metrics
 from .model import build_model
 
@@ -86,7 +86,8 @@ def main(
     t = cfg["train"]
     epochs = max_epochs or t["epochs"]
     set_determinism(seed=t["seed"])
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = defaults.pick_device()
+    print(f"device: {device}")
     use_amp = t["amp"] and device.type == "cuda"
 
     out = Path(t["out_dir"])
@@ -96,8 +97,14 @@ def main(
     (out / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False))
 
     splits = json.loads(Path(cfg["data"]["split_file"]).read_text())
+    labels = cfg["data"].get("labels", "raw")  # runs from before this setting used raw labels
+    if labels == "clean":
+        splits = use_clean_labels(splits, data_dir)
+    elif labels != "raw":
+        raise SystemExit(f"data.labels must be raw or clean, not {labels!r}")
+    normalize = cfg["data"].get("normalize", "zscore")  # runs from before this setting used zscore
     train_loader, val_loader = make_loaders(
-        splits, t["batch_size"], cfg["data"]["num_workers"], cfg["data"]["cache_rate"]
+        splits, t["batch_size"], cfg["data"]["num_workers"], cfg["data"]["cache_rate"], normalize
     )
 
     model = build_model(cfg).to(device)
@@ -132,7 +139,8 @@ def main(
         if mlflow:
             run_id = mlflow.active_run().info.run_id
             if start_epoch == 1:
-                mlflow.log_params({**cfg["model"], **{k: v for k, v in t.items() if k != "out_dir"}})
+                mlflow.log_params({**cfg["model"], **{k: v for k, v in t.items() if k != "out_dir"},
+                                   "labels": labels, "normalize": normalize})
         for epoch in range(start_epoch, epochs + 1):
             # Reseed shuffling, augmentation and dropout from the epoch number, so a
             # resumed run sees exactly the batches an uninterrupted run would have.

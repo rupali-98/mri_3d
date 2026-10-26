@@ -1,9 +1,15 @@
-"""Masks saved by hippo.visualize line up with the MRI in hippo.render3d."""
+"""Masks saved by hippo.visualize line up with the MRI in archive/render3d.py."""
+import sys
+from pathlib import Path
+
 import nibabel as nib
 import numpy as np
 import pytest
 
-from hippo import render3d, visualize
+from hippo import visualize
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # archive/, for render3d
+import render3d  # noqa: E402
 
 
 def world_centroid(path, value):
@@ -44,3 +50,13 @@ def test_build_scenes(tmp_path):
     assert len(scenes) == 2  # ground truth and prediction side by side
     for objects in scenes:
         assert len(objects) == 4  # MRI volume, anterior, posterior, text
+
+    preds = [str(tmp_path / f"case_pred_{run}.nii.gz") for run in ("baseline", "no_norm")]
+    for p in preds:
+        nib.save(nib.load(label), p)
+    assert len(render3d.build_scenes(str(image), str(label), preds)) == 3  # ground truth + one panel per run
+
+
+def test_pred_name():
+    assert render3d.pred_name("figs/hippocampus_135_pred.nii.gz", 1) == "prediction"
+    assert render3d.pred_name("figs/hippocampus_135_pred_no_norm.nii.gz", 3) == "no_norm"

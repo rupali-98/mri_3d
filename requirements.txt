@@ -9,20 +9,15 @@ monai==1.6.1
 # Core scientific stack
 numpy==2.4.6
 scipy==1.17.1
-pandas==3.0.6
-scikit-learn==1.9.1
 scikit-image==0.26.0
 matplotlib==3.11.2
-tqdm==4.70.1
 
-# Medical imaging I/O and processing
+# Medical imaging I/O
 nibabel==5.4.2
-SimpleITK==2.5.6
-pydicom==3.0.2
 
-# Image processing / visualisation
-opencv-python-headless==5.0.0.93
+# Visualisation
 plotly==7.1.0                           # interactive 3D views (hippo.visualize --html)
+vedo==2026.6.1                          # 3D surfaces (hippo.render3d, notebooks/view3d_*); same as requirements-viewer.txt
 
 # Config / CLI settings, experiment tracking, tests
 pyyaml==6.0.3

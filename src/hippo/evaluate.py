@@ -30,14 +30,14 @@ def main(run_dir: str, split: str = "test", data_dir: str | None = None) -> dict
     cfg = yaml.safe_load((run / "config.yaml").read_text())
     if data_dir is not None:  # otherwise use the data the run was trained on
         cfg["data"]["split_file"] = str(Path(data_dir) / defaults.SPLIT_FILENAME)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = defaults.pick_device()
 
     model = build_model(cfg).to(device)
     model.load_state_dict(torch.load(run / "best.pt", map_location=device))
     model.eval()
 
     cases = json.loads(Path(cfg["data"]["split_file"]).read_text())[split]
-    loader = DataLoader(Dataset(cases, eval_transforms()), batch_size=1)
+    loader = DataLoader(Dataset(cases, eval_transforms(cfg["data"].get("normalize", "zscore"))), batch_size=1)
 
     rows = []
     for case, batch in zip(cases, loader):

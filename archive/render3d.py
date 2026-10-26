@@ -5,13 +5,18 @@ surfaces. With both a label and a prediction, they are shown side by side with
 a linked camera. Needs a screen (WSL on Windows 11 works); see
 requirements-viewer.txt for a light install without PyTorch.
 
+Archived (see archive/README.md); run it from the project root with PYTHONPATH=src.
+
 Usage:
-    python -m hippo.render3d --case hippocampus_222
-    python -m hippo.render3d --case hippocampus_222 --pred runs/figures/hippocampus_222_pred.nii.gz
-    python -m hippo.render3d --image scan.nii.gz [--label mask.nii.gz] [--pred pred.nii.gz]
+    python archive/render3d.py --case hippocampus_222
+    python archive/render3d.py --case hippocampus_222 --pred runs/figures/hippocampus_222_pred.nii.gz
+    python archive/render3d.py --image scan.nii.gz [--label mask.nii.gz] [--pred pred.nii.gz]
+    python archive/render3d.py --case hippocampus_135 --pred runs/figures/compare/hippocampus_135_pred_*.nii.gz
 
 Make a prediction file first with:
     python -m hippo.visualize --case hippocampus_222 --run runs/baseline --save-nifti
+or one per run (named <case>_pred_<run>.nii.gz), to compare runs side by side:
+    python -m hippo.visualize --case hippocampus_135 --run runs/baseline runs/no_norm --save-nifti
 """
 from __future__ import annotations
 
@@ -20,21 +25,11 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 
-from . import CLASS_NAMES, defaults
+from hippo import CLASS_NAMES, defaults
+from hippo.slices import load_ras
 
 COLORS = {1: "orangered", 2: "steelblue"}  # anterior, posterior
 HELP = "drag: rotate · scroll: zoom · shift+drag: pan · q: quit"
-
-
-def load_ras(path: str) -> tuple[np.ndarray, tuple, tuple]:
-    """Array in RAS orientation, voxel size (mm) and world position of the first voxel.
-
-    Placing every file by its own origin lines up masks with a different size
-    (e.g. the padded prediction) with the MRI.
-    """
-    img = nib.as_closest_canonical(nib.load(path))
-    spacing = tuple(float(s) for s in img.header.get_zooms()[:3])
-    return np.asarray(img.dataobj), spacing, tuple(float(o) for o in img.affine[:3, 3])
 
 
 def mri_volume(path: str):
@@ -68,12 +63,21 @@ def label_surfaces(path: str, name: str) -> tuple[list, str]:
     return surfaces, summary
 
 
-def build_scenes(image: str, label: str | None = None, pred: str | None = None) -> list[list]:
+def pred_name(path: str, n_preds: int) -> str:
+    """Panel title: the run name from <case>_pred_<run>.nii.gz when comparing runs, else "prediction"."""
+    if n_preds == 1:
+        return "prediction"
+    stem = Path(path).name.replace(".nii.gz", "")
+    return stem.split("_pred_", 1)[1] if "_pred_" in stem else stem
+
+
+def build_scenes(image: str, label: str | None = None, pred: str | list[str] | None = None) -> list[list]:
     """Objects for each panel: one panel per mask (or just the MRI if there are none)."""
     from vedo import Text2D
 
     case = Path(image).name.replace(".nii.gz", "")
-    masks = [(n, p) for n, p in [("ground truth", label), ("prediction", pred)] if p]
+    preds = [pred] if isinstance(pred, str) else list(pred or [])
+    masks = ([("ground truth", label)] if label else []) + [(pred_name(p, len(preds)), p) for p in preds]
     vol = mri_volume(image)
     if not masks:
         return [[vol, Text2D(f"{case}\n{HELP}", pos="top-left", s=0.8, c="white")]]
@@ -86,7 +90,7 @@ def build_scenes(image: str, label: str | None = None, pred: str | None = None) 
     return scenes
 
 
-def main(image: str, label: str | None = None, pred: str | None = None) -> None:
+def main(image: str, label: str | None = None, pred: str | list[str] | None = None) -> None:
     from vedo import Plotter
 
     scenes = build_scenes(image, label, pred)
@@ -102,7 +106,8 @@ if __name__ == "__main__":
     src.add_argument("--case", help="Case name in the dataset, e.g. hippocampus_222")
     src.add_argument("--image", help="Path to any NIfTI image")
     p.add_argument("--label", help="Label NIfTI (with --image)")
-    p.add_argument("--pred", help="Prediction NIfTI, e.g. from hippo.visualize --save-nifti")
+    p.add_argument("--pred", nargs="+", help="Prediction NIfTI(s), e.g. from hippo.visualize --save-nifti; "
+                                             "several are shown side by side, one panel each")
     a = p.parse_args()
     if a.case:
         a.image, a.label = defaults.find_case(a.case, a.data_dir)

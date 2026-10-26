@@ -11,6 +11,7 @@ Usage:
     python -m hippo.visualize --case hippocampus_222 --run runs/baseline --html  # + rotatable 3D view
     python -m hippo.visualize --case hippocampus_222 --run runs/baseline --montage  # + every 3rd sagittal slice
     python -m hippo.visualize --case hippocampus_222 --run runs/baseline --save-nifti  # prediction as NIfTI
+    python -m hippo.visualize --case hippocampus_135 --run runs/baseline runs/no_norm --html  # compare runs
 """
 from __future__ import annotations
 
@@ -20,32 +21,20 @@ import nibabel as nib
 import numpy as np
 import torch
 import yaml
-from monai.transforms import (
-    Compose,
-    DivisiblePadd,
-    EnsureChannelFirstd,
-    LoadImaged,
-    NormalizeIntensityd,
-    Orientationd,
-)
+from monai.transforms import Compose
 
 from . import CLASS_NAMES, defaults
+from .data import base_transforms
 from .model import build_model
 
 COLORS = {1: "#e4572e", 2: "#2e86ab"}  # anterior, posterior
 OUT_DIR = "runs/figures"
 
 
-def load(image: Path, label: Path | None) -> dict:
+def load(image: Path, label: Path | None, normalize: str = "zscore") -> dict:
     """Load in RAS orientation, normalised and padded exactly as the model sees it in training."""
     keys = ["image", "label"] if label else ["image"]
-    t = Compose([
-        LoadImaged(keys=keys),
-        EnsureChannelFirstd(keys=keys),
-        Orientationd(keys=keys, axcodes="RAS"),
-        NormalizeIntensityd(keys="image", nonzero=True),
-        DivisiblePadd(keys=keys, k=8),
-    ])
+    t = Compose(base_transforms(normalize, keys))
     return t({"image": str(image), **({"label": str(label)} if label else {})})
 
 
@@ -61,6 +50,12 @@ def predict(run: Path, image: torch.Tensor) -> np.ndarray:
 def volumes_ml(mask: np.ndarray, spacing) -> dict:
     voxel_ml = float(np.prod(spacing)) / 1000
     return {name: round(float((mask == c).sum()) * voxel_ml, 3) for c, name in CLASS_NAMES.items()}
+
+
+def dice(pred: np.ndarray, truth: np.ndarray) -> dict:
+    return {name: round(2 * float(((pred == c) & (truth == c)).sum())
+                        / max(float((pred == c).sum() + (truth == c).sum()), 1), 3)
+            for c, name in CLASS_NAMES.items()}
 
 
 def draw_surface(ax, mask: np.ndarray, spacing) -> None:
@@ -151,7 +146,7 @@ def save_html(img: np.ndarray, masks: dict, spacing, path: Path, title: str) -> 
 def main(
     image: str,
     label: str | None = None,
-    run: str | None = None,
+    runs: str | list[str] | None = None,
     out: str | None = None,
     show: bool = False,
     html: bool = False,
@@ -171,8 +166,17 @@ def main(
     masks = {}
     if label:
         masks["ground truth"] = d["label"][0].numpy().astype(int)
-    if run:
-        masks["prediction"] = predict(Path(run), d["image"])
+    runs = [runs] if isinstance(runs, str) else list(runs or [])
+    for run in runs:
+        # each run sees the image preprocessed the way it was trained (the figure shows the z-scored one)
+        normalize = yaml.safe_load((Path(run) / "config.yaml").read_text())["data"].get("normalize", "zscore")
+        x = d["image"] if normalize == "zscore" else load(Path(image), None, normalize)["image"]
+        masks["prediction" if len(runs) == 1 else Path(run).name] = predict(Path(run), x)
+    titles = {name: name for name in masks}
+    if label:
+        for name in list(masks)[1:]:
+            scores = dice(masks[name], masks["ground truth"])
+            titles[name] = f"{name} (Dice " + ", ".join(f"{k[:4]} {v:.2f}" for k, v in scores.items()) + ")"
 
     # slice through the centre of the hippocampus (or the volume, if there is no mask)
     fg = next(iter(masks.values()), np.zeros_like(img)) > 0
@@ -195,29 +199,32 @@ def main(
             if mask is not None:
                 ax.imshow(cut(mask), cmap=cmap, vmin=0, vmax=2, alpha=0.55, origin="lower",
                           aspect=sy / sx, interpolation="nearest")
-            ax.set_title(f"{row_name}: {view_name}" if c == 0 else view_name, fontsize=9)
+            ax.set_title(f"{titles.get(row_name, row_name)}: {view_name}" if c == 0 else view_name, fontsize=9)
             ax.axis("off")
         if mask is not None:
             draw_surface(fig.add_subplot(len(rows), 4, r * 4 + 4, projection="3d"), mask, spacing)
             results[row_name] = volumes_ml(mask, spacing)
-            print(f"{row_name:>13}: " + ", ".join(f"{k} {v} ml" for k, v in results[row_name].items()))
+            print(f"{row_name:>13}: " + ", ".join(f"{k} {v} ml" for k, v in results[row_name].items())
+                  + titles[row_name][len(row_name):])
 
     name = Path(image).name.replace(".nii.gz", "")
     fig.suptitle(f"{name}   shape {img.shape}, spacing {tuple(round(s, 2) for s in spacing)} mm   "
                  f"(orange = anterior, blue = posterior)", fontsize=10)
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0, 1, 1 - 0.25 / fig.get_figheight()))  # leave room for the suptitle
     out_path = Path(out) if out else Path(OUT_DIR) / f"{name}.png"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=110)
     print(f"Saved {out_path}")
     if save_nifti:
-        if "prediction" not in masks:
+        if not runs:
             raise SystemExit("--save-nifti needs --run (there is no prediction to save)")
         # the affine of the loaded image (RAS, including padding) keeps the mask aligned with the MRI
-        nifti_path = out_path.with_name(f"{out_path.stem}_pred.nii.gz")
         affine = np.asarray(d["image"].affine, dtype=np.float64)
-        nib.save(nib.Nifti1Image(masks["prediction"].astype(np.uint8), affine), nifti_path)
-        print(f"Saved {nifti_path}")
+        for mask_name in list(masks)[1 if label else 0:]:
+            suffix = "" if mask_name == "prediction" else f"_{mask_name}"
+            nifti_path = out_path.with_name(f"{out_path.stem}_pred{suffix}.nii.gz")
+            nib.save(nib.Nifti1Image(masks[mask_name].astype(np.uint8), affine), nifti_path)
+            print(f"Saved {nifti_path}")
     if montage_step:
         montage_path = out_path.with_name(f"{out_path.stem}_sagittal.png")
         save_montage(img, masks, spacing, int(centre[0]), montage_step, cmap, montage_path, name)
@@ -238,7 +245,8 @@ if __name__ == "__main__":
     src.add_argument("--case", help="Case name in the dataset, e.g. hippocampus_222")
     src.add_argument("--image", help="Path to any NIfTI image")
     p.add_argument("--label", help="Label NIfTI (with --image)")
-    p.add_argument("--run", help="Run folder with best.pt + config.yaml, to add the model's prediction")
+    p.add_argument("--run", nargs="+", help="Run folder(s) with best.pt + config.yaml, to add each model's "
+                                            "prediction; several runs are shown one row each, by folder name")
     p.add_argument("--out", help=f"Output PNG (default {OUT_DIR}/<case>.png)")
     p.add_argument("--show", action="store_true", help="Also open an interactive window (needs a display)")
     p.add_argument("--html", action="store_true", help="Also save a rotatable 3D view as <out>_3d.html")

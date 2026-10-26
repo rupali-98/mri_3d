@@ -1,6 +1,7 @@
 """Dataset download, patient-level splits and MONAI data loaders."""
 from __future__ import annotations
 
+import csv
 import json
 import random
 import tarfile
@@ -72,22 +73,47 @@ def make_splits(root: Path, out: Path, val_fraction: float, test_fraction: float
     return splits
 
 
-def base_transforms() -> list:
-    keys = ["image", "label"]
-    return [
+def use_clean_labels(splits: dict, data_dir: str) -> dict:
+    """Train on the hippo.clean output: cleaned labels, excluded cases left out.
+
+    Only the training set changes. Validation and test keep the original labels,
+    so runs with and without cleaning are selected and scored against the same reference.
+    """
+    index_path = Path(data_dir) / "clean" / "cases.csv"
+    if not index_path.exists():
+        raise SystemExit(f"{index_path} not found: run python -m hippo.explore and python -m hippo.clean first")
+    with open(index_path) as f:
+        index = {r["case"]: r for r in csv.DictReader(f)}
+    train = []
+    for c in splits["train"]:
+        row = index[Path(c["image"]).name.replace(".nii.gz", "")]
+        if row["included"] == "True":
+            train.append({"image": c["image"], "label": str(Path(data_dir) / row["label"])})
+    print(f"Clean labels: {len(train)} of {len(splits['train'])} training cases kept")
+    return {**splits, "train": train}
+
+
+NORMALIZE = ("zscore", "none")  # none = raw scanner intensities, for comparison only
+
+
+def base_transforms(normalize: str = "zscore", keys: tuple = ("image", "label")) -> list:
+    if normalize not in NORMALIZE:
+        raise SystemExit(f"data.normalize must be one of {NORMALIZE}, not {normalize!r}")
+    t = [
         LoadImaged(keys=keys),
         EnsureChannelFirstd(keys=keys),
         Orientationd(keys=keys, axcodes="RAS"),
-        NormalizeIntensityd(keys="image", nonzero=True),
-        # Crops vary slightly in size; pad so the U-Net's 3 downsamplings divide evenly.
-        DivisiblePadd(keys=keys, k=8),
     ]
+    if normalize == "zscore":
+        t.append(NormalizeIntensityd(keys="image", nonzero=True))
+    # Crops vary slightly in size; pad so the U-Net's 3 downsamplings divide evenly.
+    return t + [DivisiblePadd(keys=keys, k=8)]
 
 
-def train_transforms() -> Compose:
+def train_transforms(normalize: str = "zscore") -> Compose:
     keys = ["image", "label"]
     return Compose(
-        base_transforms()
+        base_transforms(normalize)
         + [
             RandAffined(
                 keys=keys,
@@ -108,13 +134,14 @@ def train_transforms() -> Compose:
     )
 
 
-def eval_transforms() -> Compose:
-    return Compose(base_transforms() + [EnsureTyped(keys=["image", "label"])])
+def eval_transforms(normalize: str = "zscore") -> Compose:
+    return Compose(base_transforms(normalize) + [EnsureTyped(keys=["image", "label"])])
 
 
-def make_loaders(splits: dict, batch_size: int, num_workers: int, cache_rate: float):
-    train_ds = CacheDataset(splits["train"], train_transforms(), cache_rate=cache_rate, num_workers=num_workers)
-    val_ds = CacheDataset(splits["val"], eval_transforms(), cache_rate=cache_rate, num_workers=num_workers)
+def make_loaders(splits: dict, batch_size: int, num_workers: int, cache_rate: float, normalize: str = "zscore"):
+    train_ds = CacheDataset(splits["train"], train_transforms(normalize), cache_rate=cache_rate,
+                            num_workers=num_workers)
+    val_ds = CacheDataset(splits["val"], eval_transforms(normalize), cache_rate=cache_rate, num_workers=num_workers)
     # Cases differ in size after padding, so validation runs one volume at a time.
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers,
                               collate_fn=_pad_collate)

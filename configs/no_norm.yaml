@@ -1,0 +1,41 @@
+# Experiment: baseline without intensity normalisation (raw scanner values); everything else identical. MSD Task04 (hippocampus, T1 MRI, 1 mm isotropic crops).
+# Labels: 0 = background, 1 = anterior hippocampus, 2 = posterior hippocampus.
+
+# The dataset location is a per-machine setting, not part of the experiment:
+# set it with --data-dir, HIPPO_DATA_DIR or hippo.conf (see src/hippo/defaults.py).
+data:
+  val_fraction: 0.15
+  test_fraction: 0.15
+  num_workers: 2
+  cache_rate: 1.0                       # dataset is ~30 MB; cache all in RAM
+  labels: raw                           # raw, or clean = train on hippo.clean output (val/test stay raw)
+  normalize: none                       # zscore (per scan), or none = raw intensities (comparison only)
+
+model:
+  channels: [16, 32, 64, 128]
+  strides: [2, 2, 2]
+  num_res_units: 2
+  dropout: 0.1                          # also used later for MC-dropout uncertainty
+
+train:
+  seed: 42
+  epochs: 150
+  batch_size: 8                         # crops are ~35x50x35 voxels; fits easily in 4 GB
+  lr: 0.001
+  weight_decay: 0.00001
+  val_every: 5
+  amp: true                             # mixed precision, only used on CUDA
+  out_dir: runs/no_norm
+  min_free_disk_gb: 5                   # refuse to start below this; a full disk killed an earlier run
+
+qc:                                     # data exploration / quality checks (python -m hippo.explore)
+  outlier_z: 3.5                        # robust z (median/MAD) beyond which a volume, ratio or contrast is flagged
+  max_pieces: 1                         # a label part split into more pieces than this is flagged
+  intensity_gap_decades: 0.5            # scans whose intensity scales are >=10^0.5 (~3x) apart form separate groups
+
+clean:                                  # data cleaning (python -m hippo.clean, after hippo.explore)
+  min_piece_voxels: 10                  # label pieces smaller than this (besides the main one) become background
+  exclude: []                           # case names to leave out, e.g. [hippocampus_221]
+
+eval:
+  nsd_tolerance_mm: 1.0                 # same tolerance as the MSD challenge for this task

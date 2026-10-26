@@ -8,6 +8,8 @@ data:
   test_fraction: 0.15
   num_workers: 2
   cache_rate: 1.0                       # dataset is ~30 MB; cache all in RAM
+  labels: raw                           # raw, or clean = train on hippo.clean output (val/test stay raw)
+  normalize: zscore                     # zscore (per scan), or none = raw intensities (comparison only)
 
 model:
   channels: [16, 32, 64, 128]
