@@ -9,6 +9,36 @@ A research pipeline that segments the hippocampus (anterior and posterior parts)
 
 > **Intended use:** research and education only. This software is not a medical device, has not been clinically validated, and must not be used for diagnosis or any clinical decision.
 
+## Viewing results in Streamlit
+
+```bash
+PYTHONPATH=src .venv/bin/streamlit run streamlit_dashboard/compare_slices.py     # then open http://localhost:8501
+```
+
+![Preview of the Streamlit page on external case s03_L](docs/figures/streamlit_preview.png)
+
+*Preview for external hippocampus s03_L, top to bottom:*
+- *manual label (gold, green and purple subfields);*
+- *ASHS-PMC-T1 as the second reference (orange anterior, blue posterior);*
+- *the 3D U-Net's prediction;*
+- *its errors against the manual label: green correct, blue missed, red extra. The red patch below the hippocampus in the coronal view is one of the islands that "largest piece only" removes.*
+
+*Drawn with the page's own slice code by `PYTHONPATH=src .venv/bin/python streamlit_dashboard/make_preview.py`; it is not a browser screenshot.*
+
+![Screenshot of the Streamlit 3D surfaces view for s03_L](docs/figures/streamlit_3d_screenshot.png)
+
+*Screenshot of the **3D surfaces** view, same case, with **Largest piece only** ticked. Left to right:*
+- *manual label (CA1-3, subiculum, CA4-DG);*
+- *ASHS-PMC-T1 (anterior, posterior);*
+- *the 3D U-Net's largest piece, with the manual label as a grey ghost. Its Dice is 0.845 against the manual label and 0.823 against ASHS (anterior 0.827, posterior 0.726).*
+
+- **What it shows:** pick an MSD or external crop and one or more runs. You get one row per mask: ground truth, an optional second reference, then each run. Each row has axial, coronal and sagittal views, moved together by the plane sliders in the sidebar.
+- **Colours:** **Labels** shows anterior (orange) and posterior (blue), or the external subfields. **Errors** shows correct (green), wrong part (yellow), missed (blue) and extra (red). Row titles give Dice.
+- **Display options:**
+  - **3D surfaces:** rotatable surfaces; hovering shows the position in mm and the matching slice numbers.
+  - **Largest piece only:** applies the post-processing.
+- **ASHS:** for s03 and s17, the ASHS anterior/posterior labels are picked automatically as the **Second reference**. Each run's title then also gives its Dice against ASHS.
+
 ## Status
 
 | Step | What | Status |
@@ -131,29 +161,6 @@ Details in [docs/external_validation.md](docs/external_validation.md).
 7. **Next experiment: a different training dataset.** Because MSD's labels do not cover the whole hippocampus, the next branch will train on a different dataset with whole-hippocampus labels on whole-head scans, so that training, external tests and tools such as ASHS all see the same kind of image. The GPU limit will be handled with patch-based training (random patches from full images) instead of pre-cut crops. Anterior/posterior labels would then come from that dataset's own protocol or from a stated rule, compared again with ASHS.
 
 These are results on 2 small datasets and one training seed; the ASHS check covers 4 hippocampi, too few for a p-value.
-
-## Viewing results in Streamlit
-
-```bash
-PYTHONPATH=src .venv/bin/streamlit run streamlit_dashboard/compare_slices.py     # then open http://localhost:8501
-```
-
-![Preview of the Streamlit page on external case s03_L](docs/figures/streamlit_preview.png)
-
-*Preview for external hippocampus s03_L, top to bottom:*
-- *manual label (gold, green and purple subfields);*
-- *ASHS-PMC-T1 as the second reference (orange anterior, blue posterior);*
-- *the 3D U-Net's prediction;*
-- *its errors against the manual label: green correct, blue missed, red extra. The red patch below the hippocampus in the coronal view is one of the islands that "largest piece only" removes.*
-
-*Drawn with the page's own slice code by `PYTHONPATH=src .venv/bin/python streamlit_dashboard/make_preview.py`; it is not a browser screenshot.*
-
-- **What it shows:** pick an MSD or external crop and one or more runs. You get one row per mask: ground truth, an optional second reference, then each run. Each row has axial, coronal and sagittal views, moved together by the plane sliders in the sidebar.
-- **Colours:** **Labels** shows anterior (orange) and posterior (blue), or the external subfields. **Errors** shows correct (green), wrong part (yellow), missed (blue) and extra (red). Row titles give Dice.
-- **Display options:**
-  - **3D surfaces:** rotatable surfaces; hovering shows the position in mm and the matching slice numbers.
-  - **Largest piece only:** applies the post-processing.
-- **ASHS:** for s03 and s17, the ASHS anterior/posterior labels are picked automatically as the **Second reference**. Each run's title then also gives its Dice against ASHS.
 
 ## Structure
 
