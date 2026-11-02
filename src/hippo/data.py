@@ -50,8 +50,8 @@ def make_splits(root: Path, out: Path, val_fraction: float, test_fraction: float
     """Split the labelled MSD training cases into train/val/test.
 
     MSD's own test set has no public labels, so our held-out test set is carved
-    from the labelled cases. Each file is one subject, so the split is
-    subject-level and there is no leakage between sets.
+    from the labelled cases. MSD gives no subject IDs, so the split is by file;
+    files 2k-1 and 2k may be one person's left and right side (a known limitation).
     """
     meta = json.loads((root / "dataset.json").read_text())
     cases = [
@@ -76,8 +76,10 @@ def make_splits(root: Path, out: Path, val_fraction: float, test_fraction: float
 def use_clean_labels(splits: dict, data_dir: str) -> dict:
     """Train on the hippo.clean output: cleaned labels, excluded cases left out.
 
-    Only the training set changes. Validation and test keep the original labels,
-    so runs with and without cleaning are selected and scored against the same reference.
+    Excluded cases (e.g. a missing part) are also left out of validation, so they
+    can't skew model selection; validation keeps the original labels otherwise.
+    Test is unchanged: hippo.evaluate predicts every test case and leaves cases
+    with a missing part out of the scores.
     """
     index_path = Path(data_dir) / "clean" / "cases.csv"
     if not index_path.exists():
@@ -89,8 +91,10 @@ def use_clean_labels(splits: dict, data_dir: str) -> dict:
         row = index[Path(c["image"]).name.replace(".nii.gz", "")]
         if row["included"] == "True":
             train.append({"image": c["image"], "label": str(Path(data_dir) / row["label"])})
-    print(f"Clean labels: {len(train)} of {len(splits['train'])} training cases kept")
-    return {**splits, "train": train}
+    val = [c for c in splits["val"] if index[Path(c["image"]).name.replace(".nii.gz", "")]["included"] == "True"]
+    print(f"Clean labels: {len(train)} of {len(splits['train'])} training and "
+          f"{len(val)} of {len(splits['val'])} validation cases kept")
+    return {**splits, "train": train, "val": val}
 
 
 NORMALIZE = ("zscore", "none")  # none = raw scanner intensities, for comparison only

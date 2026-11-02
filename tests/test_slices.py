@@ -23,6 +23,19 @@ def test_on_grid_places_crop_by_position(tmp_path):
     assert out.shape == (40, 40, 40) and out.sum() == 2 and out[11, 22, 33] == 2   # outside the crop: 0
 
 
+def test_surfaces_in_world_mm():
+    labels = np.zeros((10, 10, 10), np.int32)
+    labels[2:5, 3:6, 4:8] = 1                   # a box of voxels 2-4, 3-5, 4-7
+    labels[0:2, 0:2, 0:2] = 2                   # touches the edge: still a closed surface
+    out = slices.surfaces(labels, (2.0, 1.0, 1.0), (100.0, 0.0, -50.0),
+                          {1: ("anterior", "orangered"), 2: ("posterior", "steelblue"), 3: ("none", "red")})
+    assert [(name, colour) for name, colour, _, _ in out] == [("anterior", "#ff4500"), ("posterior", "#4682b4")]
+    verts = out[0][2]
+    # the surface sits half a voxel outside the voxel centres, at their world position
+    assert np.allclose(verts.min(0), [100 + 2 * 1.5, 2.5, -50 + 3.5]) and np.allclose(verts.max(0), [100 + 2 * 4.5, 5.5, -50 + 7.5])
+    assert out[1][2].min(0).tolist() == [100 - 1.0, -0.5, -50 - 0.5]
+
+
 def test_error_map():
     truth = np.array([1, 1, 2, 0, 2, 0])
     pred = np.array([1, 2, 0, 1, 2, 0])

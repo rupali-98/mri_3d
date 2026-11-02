@@ -18,6 +18,11 @@ def _one_hot(label: torch.Tensor) -> torch.Tensor:
     return one_hot(label.long(), num_classes=NUM_CLASSES, dim=1)
 
 
+def missing_parts(label) -> list[str]:
+    """Names of the parts (anterior, posterior) with no voxels in a label map."""
+    return [name for cls, name in CLASS_NAMES.items() if not (label == cls).any()]
+
+
 def case_metrics(pred: torch.Tensor, label: torch.Tensor, spacing_mm, nsd_tolerance_mm: float = 1.0) -> dict:
     """Dice, NSD and volumes for one case.
 

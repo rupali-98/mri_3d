@@ -3,7 +3,8 @@
 Both runs are scored on the same cases, so the comparison is paired: for each
 metric, the mean per-case difference (B - A), how many cases got better or worse,
 and a Wilcoxon signed-rank p-value. A small mean difference with a large p-value
-is noise between training runs, not an effect of the change.
+is noise between training runs, not an effect of the change. Cases that
+hippo.evaluate could not score (blank Dice/NSD) in either run are left out and counted.
 
 Usage (run python -m hippo.evaluate on both runs first):
     python -m hippo.compare runs/baseline runs/clean_labels
@@ -31,10 +32,13 @@ def main(run_a: str, run_b: str, split: str = "test") -> dict:
     a, b = load(Path(run_a), split), load(Path(run_b), split)
     if a.keys() != b.keys():
         raise SystemExit(f"The runs were evaluated on different cases; compare runs that share {split} cases")
-    cases = sorted(a)
     metrics = [k for k in next(iter(a.values())) if k.startswith(("dice", "nsd"))]
+    # blank metrics: hippo.evaluate could not score the case (a part missing from the ground truth)
+    dropped = sorted(c for c in a if any(r[c][m] == "" for r in (a, b) for m in metrics))
+    cases = sorted(set(a) - set(dropped))
 
-    result = {"split": split, "n_cases": len(cases), "a": run_a, "b": run_b, "metrics": {}}
+    result = {"split": split, "n_cases": len(cases), "n_dropped": len(dropped), "dropped": dropped,
+              "a": run_a, "b": run_b, "metrics": {}}
     for m in metrics:
         va = np.array([float(a[c][m]) for c in cases])
         vb = np.array([float(b[c][m]) for c in cases])
@@ -46,6 +50,8 @@ def main(run_a: str, run_b: str, split: str = "test") -> dict:
                                 "worse": int((diff < 0).sum()), "p_wilcoxon": p}
 
     print(f"{split} split, {len(cases)} cases.  A = {run_a}   B = {run_b}")
+    if dropped:
+        print(f"{len(dropped)} case(s) not scored and left out: {', '.join(dropped)}")
     print(f"{'metric':<16}{'A':>8}{'B':>8}{'B-A':>9}{'better':>8}{'worse':>7}{'p':>8}")
     for m, r in result["metrics"].items():
         print(f"{m:<16}{r['mean_a']:>8.4f}{r['mean_b']:>8.4f}{r['mean_diff']:>+9.4f}"

@@ -1,12 +1,14 @@
 """Axial, coronal and sagittal slices of a NIfTI scan with mask overlays, drawn like 3D Slicer.
 
-Used by notebooks/view_slices.ipynb (one file) and notebooks/compare_slices.ipynb
-(ground truth and the predictions of several runs side by side). Slices are drawn
-as PNG images, so a notebook can update them quickly while a slider moves.
+Used by the Streamlit page streamlit_dashboard/compare_slices.py (ground truth and the
+predictions of several runs side by side). Slices are drawn as PNG images, so the page
+can update them quickly while a slider moves.
 
 Orientation follows 3D Slicer's default (radiological): in the axial and coronal
 views the patient's right is on the left of the screen; the sagittal view has
 anterior on the left. Each view is labelled with its edge letters.
+
+surfaces() gives each label's surface in world mm, for the 3D view of streamlit_dashboard/compare_slices.py.
 """
 from __future__ import annotations
 
@@ -14,7 +16,7 @@ import io
 from pathlib import Path
 
 import numpy as np
-from matplotlib.colors import to_rgb
+from matplotlib.colors import to_hex, to_rgb
 import nibabel as nib
 from PIL import Image, ImageDraw, ImageFont
 
@@ -114,6 +116,20 @@ def error_map(pred: np.ndarray, truth: np.ndarray, parts: bool = True) -> np.nda
     out[(p > 0) & (t > 0) & (p != t)] = 2
     out[(p == 0) & (t > 0)] = 3
     out[(p > 0) & (t == 0)] = 4
+    return out
+
+
+def surfaces(labels: np.ndarray, spacing, origin, colours: dict) -> list[tuple[str, str, np.ndarray, np.ndarray]]:
+    """(name, hex colour, vertices in world mm, triangles) of each label value's surface, for a 3D view."""
+    from skimage.measure import marching_cubes
+    out = []
+    for value, (name, colour) in colours.items():
+        mask = labels == value
+        if mask.sum() < 2:
+            continue
+        # padded so a label touching the edge still gets a closed surface; the pad is taken off the vertices
+        verts, faces, _, _ = marching_cubes(np.pad(mask, 1).astype(np.uint8), 0.5, spacing=tuple(spacing))
+        out.append((name, to_hex(colour), verts - np.asarray(spacing) + np.asarray(origin), faces))
     return out
 
 

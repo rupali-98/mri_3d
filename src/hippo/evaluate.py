@@ -3,6 +3,11 @@
 Writes one row per case (Dice, NSD, predicted and true volumes) and a summary
 with mean and median per metric, the same statistics the MSD paper reports.
 
+Every case is predicted. A case whose ground truth has no anterior or no
+posterior can't be scored (NSD is undefined), so its Dice and NSD are left
+blank and it is left out of the summary, which lists it under "dropped".
+Its predicted volume is still written, and hippo.visualize still shows it.
+
 Usage:
     python -m hippo.evaluate --run runs/baseline
 """
@@ -19,14 +24,17 @@ from monai.data import DataLoader, Dataset
 
 from . import defaults
 from .data import eval_transforms
-from .metrics import case_metrics
+from .metrics import case_metrics, missing_parts
 from .model import build_model
 from .train import spacing_from_affine
 
 
 @torch.no_grad()
-def main(run_dir: str, split: str = "test", data_dir: str | None = None) -> dict:
+def main(run_dir: str, split: str = "test", data_dir: str | None = None, out_dir: str | None = None) -> dict:
+    """out_dir: where the CSV and summary go (default: the run folder), e.g. for archive/shift.py's test copies."""
     run = Path(run_dir)
+    out = Path(out_dir) if out_dir else run
+    out.mkdir(parents=True, exist_ok=True)
     cfg = yaml.safe_load((run / "config.yaml").read_text())
     if data_dir is not None:  # otherwise use the data the run was trained on
         cfg["data"]["split_file"] = str(Path(data_dir) / defaults.SPLIT_FILENAME)
@@ -39,25 +47,33 @@ def main(run_dir: str, split: str = "test", data_dir: str | None = None) -> dict
     cases = json.loads(Path(cfg["data"]["split_file"]).read_text())[split]
     loader = DataLoader(Dataset(cases, eval_transforms(cfg["data"].get("normalize", "zscore"))), batch_size=1)
 
-    rows = []
+    rows, dropped = [], {}
     for case, batch in zip(cases, loader):
         img, lbl = batch["image"].to(device), batch["label"]
         pred = model(img).argmax(dim=1, keepdim=True).cpu()
         m = case_metrics(pred, lbl, spacing_from_affine(batch["image"].affine), cfg["eval"]["nsd_tolerance_mm"])
-        rows.append({"case": Path(case["image"]).name, **m})
+        name = Path(case["image"]).name
+        if missing := missing_parts(lbl):
+            dropped[name] = "no " + " or ".join(missing) + " in the ground truth"
+            m = {k: "" if k.startswith(("dice", "nsd")) else v for k, v in m.items()}
+        rows.append({"case": name, **m})
 
-    with open(run / f"metrics_{split}.csv", "w", newline="") as f:
+    with open(out / f"metrics_{split}.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=rows[0].keys())
         w.writeheader()
         w.writerows(rows)
 
-    summary = {"n_cases": len(rows)}
+    scored = [r for r in rows if r["case"] not in dropped]
+    summary = {"n_cases": len(scored), "n_dropped": len(dropped), "dropped": dropped}
     for k in rows[0]:
-        if k.startswith(("dice", "nsd")):
-            vals = np.array([r[k] for r in rows])
+        if k.startswith(("dice", "nsd")) and scored:
+            vals = np.array([r[k] for r in scored])
             summary[k] = {"mean": float(vals.mean()), "median": float(np.median(vals)), "std": float(vals.std())}
-    (run / f"summary_{split}.json").write_text(json.dumps(summary, indent=2))
+    (out / f"summary_{split}.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))
+    if dropped:
+        print(f"{len(dropped)} of {len(rows)} cases not scored (predictions still made): "
+              + "; ".join(f"{c}: {why}" for c, why in dropped.items()))
     return summary
 
 

@@ -1,0 +1,7 @@
+run,dataset,metric,n,mean,median,std
+3D U-Net,internal,dice,39,0.8741,0.8804,0.0344
+3D U-Net,internal,nsd,39,0.9362,0.9562,0.0485
+3D U-Net,external,dice,50,0.811,0.8127,0.0298
+3D U-Net,external,nsd,50,0.7773,0.7777,0.0379
+3D U-Net,external_largest,dice,50,0.8402,0.8426,0.0216
+3D U-Net,external_largest,nsd,50,0.8253,0.8304,0.0344

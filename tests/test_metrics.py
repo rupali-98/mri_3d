@@ -1,6 +1,6 @@
 import torch
 
-from hippo.metrics import case_metrics
+from hippo.metrics import case_metrics, missing_parts
 
 
 def _blob():
@@ -35,3 +35,11 @@ def test_shift_lowers_dice_and_nsd_within_tolerance():
     one = torch.roll(lbl, shifts=1, dims=-1)
     m1 = case_metrics(one, lbl, (1.0, 1.0, 1.0), nsd_tolerance_mm=2.0)
     assert m1["nsd_anterior"] > m1["dice_anterior"]
+
+
+def test_missing_parts():
+    lbl = _blob()
+    assert missing_parts(lbl) == []
+    lbl[lbl == 2] = 0
+    assert missing_parts(lbl) == ["posterior"]
+    assert missing_parts(torch.zeros_like(lbl)) == ["anterior", "posterior"]

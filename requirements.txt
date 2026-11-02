@@ -17,7 +17,8 @@ nibabel==5.4.2
 
 # Visualisation
 plotly==7.1.0                           # interactive 3D views (hippo.visualize --html)
-vedo==2026.6.1                          # 3D surfaces (hippo.render3d, notebooks/view3d_*); same as requirements-viewer.txt
+vedo==2026.6.1                          # 3D surfaces (archive/render3d.py); same as requirements-viewer.txt
+streamlit==1.66.1                       # streamlit_dashboard/compare_slices.py (slice and 3D viewer page)
 
 # Config / CLI settings, experiment tracking, tests
 pyyaml==6.0.3
