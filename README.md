@@ -1,5 +1,10 @@
 # Hippocampus Volumetry on 3D MRI
 
+**Quick links:**
+- **Figures:** [Dice and NSD, MSD test vs external](docs/figures/baseline_msd_vs_external.png) ([table](#results-in-distribution-vs-external-3d-u-net)) and the [Streamlit dashboard preview](docs/figures/streamlit_preview.png).
+- **Streamlit dashboard:** [how to run it](#viewing-results-in-streamlit). It runs locally at http://localhost:8501 after `PYTHONPATH=src .venv/bin/streamlit run streamlit_dashboard/compare_slices.py`.
+- **Write-ups:** [Conclusion](#conclusion-first-iteration) and the [external validation report](docs/external_validation.md).
+
 A research pipeline that segments the hippocampus (anterior and posterior parts) on 3D T1 MRI, measures its volume, and reports how much the model can be trusted on each scan.
 
 > **Intended use:** research and education only. This software is not a medical device, has not been clinically validated, and must not be used for diagnosis or any clinical decision.
