@@ -63,7 +63,21 @@ def test_app_predicts_and_compares(tmp_path, monkeypatch):
     assert not at.exception and "missed" in " ".join(m.value for m in at.markdown)
     assert len(at.get("plotly_chart")) == 3
 
-    next(c for c in at.sidebar.checkbox if c.label == "Largest piece only").check().run()
+    # largest piece is for external crops only: greyed out for an MSD image
+    assert next(c for c in at.sidebar.checkbox if c.label == "Largest piece only").disabled
+
+    # ... and available for an external crop (here a copy of the fake case under data/external/)
+    for kind in ("imagesTr", "labelsTr"):
+        (tmp_path / "data/external" / kind).mkdir(parents=True)
+        shutil.copy(tmp_path / "data/Task04_Hippocampus" / kind / "hippocampus_001.nii.gz",
+                    tmp_path / "data/external" / kind / "s01_L.nii.gz")
+    at = AppTest.from_file(str(tmp_path / "streamlit_dashboard" / "compare_slices.py"), default_timeout=60).run()
+    at.selectbox(key="image").select("data/external/imagesTr/s01_L.nii.gz").run()
+    at.multiselect[0].set_value(["runs/baseline"])
+    at.button[0].click().run()
+    box = next(c for c in at.sidebar.checkbox if c.label == "Largest piece only")
+    assert not box.disabled
+    box.check().run()
     assert not at.exception and "**baseline (largest of " in " ".join(m.value for m in at.markdown)
 
     # an ASHS label for the image is picked as the second reference: its own row, and each run is scored against it

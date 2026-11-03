@@ -93,6 +93,11 @@ def reference_name(path: str) -> str:
     return "ASHS-PMC-T1" if Path(path).parent == ASHS else Path(path).name.split(".nii")[0]
 
 
+def external_crop(image: str) -> bool:
+    """True for crops of the external dataset (data/external*/, data/shifted_external/), False for MSD."""
+    return any(part.startswith("external") or part == "shifted_external" for part in Path(image).parts)
+
+
 def slice_numbers(scan: Scan, points: np.ndarray) -> np.ndarray:
     """The sagittal, coronal and axial plane-slider values (voxel index) nearest each point in mm."""
     idx = np.rint((points - np.asarray(scan.origin)) / np.asarray(scan.spacing)).astype(int)
@@ -180,9 +185,11 @@ with st.sidebar:
     opacity = st.slider("Opacity", 0.0, 1.0, 0.5, 0.05)
     crosshair = st.checkbox("Crosshair", value=True)
     size = st.slider("Size px", 120, 480, 240, 20)
-    largest = st.checkbox("Largest piece only", value=False,
-                          help="Post-processing: keep only each prediction's largest connected piece "
-                               "(as hippo.external --largest-piece); Dice is recomputed")
+    external = bool(shown) and external_crop(shown["image"])
+    largest = st.checkbox("Largest piece only", value=False, disabled=not external,
+                          help="Post-processing for external crops only (the MSD results use the plain prediction): "
+                               "keep each prediction's largest connected piece (as hippo.external --largest-piece); "
+                               "Dice is recomputed") and external  # a tick left over from an external image is ignored
     view3d = st.checkbox("3D surfaces", value=False, help="A rotatable 3D view of each mask, below the slices")
     ghost = st.checkbox("Ground truth as a ghost in 3D", value=True, disabled=not (view3d and has_truth),
                         help="The ground truth as a faint grey surface in each run's 3D view (Labels colour only)")
@@ -198,8 +205,9 @@ if not shown:
         "(external, names inferred from the atlas).\n"
         "- **3D surfaces** (Display): a rotatable 3D view of each mask below the slices, with the ground truth "
         "as a faint grey ghost in each run's view.\n"
-        "- **Largest piece only** (Display): post-processing that keeps each prediction's largest connected "
-        "piece; the row title says how many pieces there were, and Dice is recomputed.\n"
+        "- **Largest piece only** (Display, external crops only): post-processing that keeps each prediction's "
+        "largest connected piece; the row title says how many pieces there were, and Dice is recomputed. "
+        "It is greyed out for MSD images, whose results always use the plain prediction.\n"
         "- **Second reference** (sidebar): another set of labels shown as its own row, e.g. ASHS-PMC-T1 "
         "anterior/posterior for s03 and s17 (picked automatically for those external crops). Its row is scored "
         "against the ground truth, and each run's title adds its Dice against it (anterior/posterior too). "

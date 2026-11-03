@@ -1,14 +1,18 @@
 """Draw a preview of the Streamlit page for the README, with the page's own slice-drawing code.
 
-Same rows as compare_slices.py shows for one external crop: ground truth, ASHS (second
-reference), the run's prediction, and its error map, each as axial, coronal and sagittal
-views through the ground truth's centre, with the Dice the row titles give.
+Same rows as compare_slices.py shows for one crop, each as axial, coronal and sagittal views
+through the ground truth's centre, with the Dice the row titles give:
+  - external crop (e.g. s03_L): ground truth, ASHS (second reference, if there is one), the
+    run's prediction, its error map (whole hippocampus);
+  - MSD case (hippocampus_NNN): ground truth, the run's prediction with anterior/posterior
+    Dice, its error map per part (yellow = wrong part). Plain prediction, no post-processing.
 It is a still picture made from the same functions, not a browser screenshot.
 
-Outputs: docs/figures/streamlit_preview.png
+Outputs: docs/figures/streamlit_preview.png (or --out)
 
 Usage (from the project root):
     PYTHONPATH=src .venv/bin/python streamlit_dashboard/make_preview.py [--case s03_L] [--run runs/baseline]
+    PYTHONPATH=src .venv/bin/python streamlit_dashboard/make_preview.py --case hippocampus_135 --out docs/figures/streamlit_preview_msd.png
 """
 import argparse
 import io
@@ -43,12 +47,21 @@ def predict(run: Path, image: str, scan: Scan) -> np.ndarray:
         return on_grid(path, scan.data.shape, scan.spacing, scan.origin)
 
 
-def main(case: str, run: Path, name: str):
-    image, label = f"data/external/imagesTr/{case}.nii.gz", f"data/external/labelsTr/{case}.nii.gz"
+def main(case: str, run: Path, name: str, out: Path = OUT):
+    msd = case.startswith("hippocampus_")  # MSD case: anterior/posterior labels, scored per part
+    folder = "data/Task04_Hippocampus" if msd else "data/external"
+    image, label = f"{folder}/imagesTr/{case}.nii.gz", f"{folder}/labelsTr/{case}.nii.gz"
     scan = Scan(image)
     grid = (scan.data.shape, scan.spacing, scan.origin)
     truth = on_grid(label, *grid)
     pred = predict(run, image, scan)
+    if msd:
+        rows = [("ground truth (MSD: anterior orange, posterior blue)", truth, rgb_colours(label_colours({1, 2}))),
+                (f"{name}: Dice whole {dice(pred > 0, truth > 0):.3f}, anterior {dice(pred == 1, truth == 1):.3f}, "
+                 f"posterior {dice(pred == 2, truth == 2):.3f}", pred, rgb_colours(label_colours({1, 2}))),
+                (f"{name}, Errors colour: green correct, yellow wrong part, blue missed, red extra",
+                 error_map(pred, truth, parts=True), rgb_colours(ERRORS))]
+        return draw(scan, truth, rows, case, name, out)
     rows = [("ground truth (external subfields)", truth, rgb_colours(label_colours(set(np.unique(truth)) - {0})))]
     if (ASHS / f"{case}.nii.gz").exists():
         ashs = on_grid(str(ASHS / f"{case}.nii.gz"), *grid)
@@ -61,7 +74,11 @@ def main(case: str, run: Path, name: str):
     rows.append((f"{name}: Dice whole {dice(pred > 0, truth > 0):.3f}{vs_ashs}", pred, rgb_colours(label_colours({1, 2}))))
     rows.append((f"{name}, Errors colour: green correct, blue missed, red extra", error_map(pred, truth, parts=False),
                  rgb_colours(ERRORS)))
+    draw(scan, truth, rows, case, name, out)
 
+
+def draw(scan: Scan, truth: np.ndarray, rows: list, case: str, name: str, out: Path):
+    """The rows as the page shows them, through the ground truth's centre, saved to `out`."""
     voxels = np.argwhere(truth > 0)
     pos = [int(c) for c in voxels[np.abs(voxels - voxels.mean(0)).sum(1).argmin()]]  # where the page starts
     scale = mm_per_px(scan.data.shape, scan.spacing, 240)
@@ -73,22 +90,22 @@ def main(case: str, run: Path, name: str):
     width = pad * 2 + sum(t.width for t in tiles[0]) + gap * 2
     height = pad + 30 + sum(title_h + max(t.height for t in row) + gap for row in tiles) + 20
     page = Image.new("RGB", (width, height), "white")
-    draw = ImageDraw.Draw(page)
+    pen = ImageDraw.Draw(page)
     font = lambda size: ImageFont.truetype(FONT, size) if Path(FONT).exists() else ImageFont.load_default()
-    draw.text((pad, pad), f"Streamlit page preview: {case}  ({name})", fill="#222", font=font(16))
+    pen.text((pad, pad), f"Streamlit page preview: {case}  ({name})", fill="#222", font=font(16))
     y = pad + 30
     for (title, _, _), row in zip(rows, tiles):
-        draw.text((pad, y + 4), title, fill="#222", font=font(13))
+        pen.text((pad, y + 4), title, fill="#222", font=font(13))
         y += title_h
         x = pad
         for tile in row:
             page.paste(tile, (x, y))
             x += tile.width + gap
         y += max(t.height for t in row) + gap
-    draw.text((pad, y + 2), "Research use only, not for diagnosis.", fill="#777", font=font(12))
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    page.save(OUT)
-    print(f"Saved {OUT}")
+    pen.text((pad, y + 2), "Research use only, not for diagnosis.", fill="#777", font=font(12))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    page.save(out)
+    print(f"Saved {out}")
 
 
 if __name__ == "__main__":
@@ -96,5 +113,6 @@ if __name__ == "__main__":
     p.add_argument("--case", default="s03_L")
     p.add_argument("--run", default="runs/baseline")
     p.add_argument("--name", default="3D U-Net", help="Run name shown in the row titles")
+    p.add_argument("--out", default=str(OUT), help="Output PNG")
     a = p.parse_args()
-    main(a.case, Path(a.run), a.name)
+    main(a.case, Path(a.run), a.name, Path(a.out))

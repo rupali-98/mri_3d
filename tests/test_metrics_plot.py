@@ -40,8 +40,20 @@ def test_datasets_keeps_only_the_chosen_groups(tmp_path):
     rows = metrics_plot.main([str(run)], str(tmp_path / "fig"), datasets=["internal", "external"])
     assert {r["dataset"] for r in rows} == {"internal", "external"}          # shifted group left out
     assert (tmp_path / "fig.png").stat().st_size > 0
-    fig = metrics_plot.plot({"run": {d: v for d, v in metrics_plot.case_scores(run).items() if d != "external_shifted"}})
+    fig = metrics_plot.plot({"run": {d: v for d, v in metrics_plot.case_scores(run).items()
+                                     if d in ("internal", "external")}})
     assert [t.get_text() for t in fig.legends[0].get_texts()] == [metrics_plot.DATASETS[0][1], metrics_plot.DATASETS[1][1]]
+
+
+def test_parts_only_when_asked(tmp_path):
+    run = tmp_path / "run"
+    write_csv(run / "metrics_test.csv", [{"case": "x", "dice_anterior": 0.6, "dice_posterior": 0.8,
+                                          "nsd_anterior": 0.9, "nsd_posterior": 0.7}])
+    assert {r["dataset"] for r in metrics_plot.main([str(run)], str(tmp_path / "a"))} == {"internal"}
+    rows = metrics_plot.main([str(run)], str(tmp_path / "b"), datasets=["internal_anterior", "internal_posterior"])
+    got = {(r["dataset"], r["metric"]): r["mean"] for r in rows}
+    assert got == {("internal_anterior", "dice"): 0.6, ("internal_anterior", "nsd"): 0.9,
+                   ("internal_posterior", "dice"): 0.8, ("internal_posterior", "nsd"): 0.7}
 
 
 def test_external_largest_group(tmp_path):

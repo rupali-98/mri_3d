@@ -8,6 +8,8 @@ The datasets are not scored on the same labels:
   - MSD test (labels anterior/posterior): the mean of the anterior and posterior
     score of each case, from <run>/metrics_test.csv (hippo.evaluate); cases
     hippo.evaluate could not score (blank Dice/NSD) are left out;
+  - internal_anterior / internal_posterior (orangered / steelblue triangles): MSD test per
+    part, same file; only drawn when named in --datasets (the README in-distribution figure);
   - external (subfield labels): the whole hippocampus, from
     <run>/external/metrics_external.csv (hippo.external);
   - external_largest (dark orange triangles; same labels): the same after keeping each
@@ -30,6 +32,7 @@ Outputs (default runs/figures/):
 Usage:
     python -m hippo.metrics_plot --runs runs/baseline runs/clean_labels runs/no_norm
     python -m hippo.metrics_plot --runs runs/baseline --names "3D U-Net" --datasets internal external external_largest --out docs/figures/baseline_msd_vs_external
+    python -m hippo.metrics_plot --runs runs/baseline --names "3D U-Net" --datasets internal_anterior internal_posterior --out docs/figures/msd_test_parts
 --datasets keeps only some groups (the README figure);
 --names labels the runs in the figure and table (default: the run folder names).
 """
@@ -53,7 +56,11 @@ DATASETS = [("internal", "MSD test (mean of anterior/posterior)", "#2a78d6", "o"
             # a darker step of the external hue: the same data after post-processing, not a new dataset
             ("external_largest", "External, largest piece only (post-processing)", "#9c3a12", "v"),
             ("shifted", "MSD test, shifted crops (mean over shifts)", "#1baf7a", "s"),
-            ("external_shifted", "External, shifted boxes (mean over shifts)", "#eda100", "^")]
+            ("external_shifted", "External, shifted boxes (mean over shifts)", "#eda100", "^"),
+            # MSD test per part, in the label colours of the slice views (anterior orangered, posterior steelblue)
+            ("internal_anterior", "MSD test, anterior", "#e0502a", "^"),
+            ("internal_posterior", "MSD test, posterior", "#4682b4", "v")]
+ON_REQUEST = {"internal_anterior", "internal_posterior"}  # drawn only when named in --datasets
 CONTROL = "none"  # archive/shift.py's padded, unshifted copy: not a shift, so left out of the shifted group
 INK, MUTED, GRID = "#1f1f1e", "#6b6a64", "#e4e3de"
 
@@ -70,6 +77,8 @@ def case_scores(run: Path) -> dict:
         rows = [r for r in read_csv(run / "metrics_test.csv") if r["dice_anterior"] != ""]
         scores["internal"] = {m: np.array([(float(r[f"{m}_anterior"]) + float(r[f"{m}_posterior"])) / 2 for r in rows])
                               for m, _ in METRICS}
+        for part in ("anterior", "posterior"):
+            scores[f"internal_{part}"] = {m: np.array([float(r[f"{m}_{part}"]) for r in rows]) for m, _ in METRICS}
     for ds in ("external", "external_largest"):  # external_largest: hippo.external --largest-piece
         if (run / ds / "metrics_external.csv").exists():
             rows = read_csv(run / ds / "metrics_external.csv")
@@ -130,8 +139,9 @@ def plot(scores: dict) -> plt.Figure:
         ax.spines["bottom"].set_color(GRID)
     handles = [plt.Line2D([], [], color=c, marker=mk, ls="", markersize=6, label=name) for _, name, c, mk in shown]
     fig.legend(handles=handles, loc="upper left", ncol=2, frameon=False, fontsize=9, bbox_to_anchor=(0.01, 0.99))
-    note = ("Dots: one per case. Bar and number: mean. MSD test and external use different label definitions, "
-            "so compare runs within a dataset.")
+    note = "Dots: one per case. Bar and number: mean."
+    if any(ds.startswith("external") for ds, *_ in shown):
+        note += " MSD test and external use different label definitions, so compare runs within a dataset."
     if any(ds.endswith("shifted") for ds, *_ in shown):
         note += ("\nShifted: each case's crop moved ±5/±10 mm per axis (archive/shift.py; MSD padded with zeros, "
                  "external box moved on the whole brain), averaged over the shifts.")
@@ -148,8 +158,8 @@ def main(runs: list[str], out: str = OUT, datasets: list[str] | None = None,
         raise SystemExit(f"--names needs one name per run ({len(runs)}), got {len(names)}")
     labels = names or [Path(r).name for r in runs]
     scores = {label: s for r, label in zip(runs, labels) if (s := case_scores(Path(r)))}
-    if datasets:
-        scores = {run: kept for run, s in scores.items() if (kept := {d: v for d, v in s.items() if d in datasets})}
+    keep = (lambda d: d in datasets) if datasets else (lambda d: d not in ON_REQUEST)
+    scores = {run: kept for run, s in scores.items() if (kept := {d: v for d, v in s.items() if keep(d)})}
     if not scores:
         raise SystemExit("No metrics found; run hippo.evaluate, hippo.external and/or archive/shift.py on these runs first")
     out = Path(out)

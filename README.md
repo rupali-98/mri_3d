@@ -1,7 +1,7 @@
 # Hippocampus Volumetry on 3D MRI
 
 **Quick links:**
-- **Figures:** [Dice and NSD, MSD test vs external](docs/figures/baseline_msd_vs_external.png) ([table](#results-in-distribution-vs-external-3d-u-net)) and the [Streamlit dashboard preview](docs/figures/streamlit_preview.png).
+- **Figures:** [MSD test per part](docs/figures/msd_test_parts.png), [Dice and NSD, MSD test vs external](docs/figures/baseline_msd_vs_external.png) ([table](#results-in-distribution-vs-external-3d-u-net)) and the Streamlit dashboard previews ([MSD test](docs/figures/streamlit_preview_msd.png), [external](docs/figures/streamlit_preview.png)).
 - **Streamlit dashboard:** [how to run it](#viewing-results-in-streamlit). It runs locally at http://localhost:8501 after `PYTHONPATH=src .venv/bin/streamlit run streamlit_dashboard/compare_slices.py`.
 - **Write-ups:** [Conclusion](#conclusion-first-iteration) and the [external validation report](docs/external_validation.md).
 
@@ -15,41 +15,44 @@ A research pipeline that segments the hippocampus (anterior and posterior parts)
 PYTHONPATH=src .venv/bin/streamlit run streamlit_dashboard/compare_slices.py     # then open http://localhost:8501
 ```
 
-![Preview of the Streamlit page on external case s03_L](docs/figures/streamlit_preview.png)
+### In distribution: MSD test
 
-*Preview for external hippocampus s03_L, top to bottom:*
-- *manual label (gold, green and purple subfields);*
-- *ASHS-PMC-T1 as the second reference (orange anterior, blue posterior);*
-- *the 3D U-Net's prediction;*
-- *its errors against the manual label: green correct, blue missed, red extra. The red patch below the hippocampus in the coronal view is one of the islands that "largest piece only" removes.*
+**Slices** (test case hippocampus_135):
 
-*Drawn with the page's own slice code by `PYTHONPATH=src .venv/bin/python streamlit_dashboard/make_preview.py`; it is not a browser screenshot.*
+![Slice views of MSD test case hippocampus_135 on the Streamlit page](docs/figures/streamlit_preview_msd.png)
 
-![Screenshot of the Streamlit 3D surfaces view for s03_L](docs/figures/streamlit_3d_screenshot.png)
+*Rows, top to bottom: MSD label (orange anterior, blue posterior); 3D U-Net prediction (Dice whole 0.913, anterior 0.913, posterior 0.887); errors per part (green correct, yellow wrong part at the front/back boundary, blue missed, red extra). Plain prediction, no post-processing.*
 
-*Screenshot of the **3D surfaces** view, same case, with **Largest piece only** ticked. Left to right:*
-- *manual label (CA1-3, subiculum, CA4-DG);*
-- *ASHS-PMC-T1 (anterior, posterior);*
-- *the 3D U-Net's largest piece, with the manual label as a grey ghost. Its Dice is 0.845 against the manual label and 0.823 against ASHS (anterior 0.827, posterior 0.726).*
+**3D surfaces** (same test case):
+
+![3D surfaces view of MSD test case hippocampus_135 on the Streamlit page](docs/figures/streamlit_3d_screenshot_msd.png)
+
+*Left: MSD label. Right: 3D U-Net prediction, with the label as a grey ghost (Dice whole 0.913, anterior 0.913, posterior 0.887). Plain prediction, no post-processing.*
+
+### External: MNI-HISUB25
+
+**Slices** (case s03_L):
+
+![Slice views of external case s03_L on the Streamlit page](docs/figures/streamlit_preview.png)
+
+*Rows, top to bottom: manual label (gold CA1-3, green subiculum, purple CA4-DG); ASHS-PMC-T1 as the second reference (orange anterior, blue posterior; Dice 0.862 vs the manual label); 3D U-Net prediction (Dice 0.796); errors vs the manual label (green correct, blue missed, red extra). The red patch below the hippocampus in the coronal view is one of the islands that "Largest piece only" removes.*
+
+**3D surfaces** (same case, "Largest piece only" ticked):
+
+![3D surfaces view of external case s03_L on the Streamlit page](docs/figures/streamlit_3d_screenshot.png)
+
+*Left to right: manual label; ASHS-PMC-T1; 3D U-Net largest piece, with the manual label as a grey ghost (Dice 0.845 vs the manual label; vs ASHS 0.823 whole, 0.827 anterior, 0.726 posterior).*
+
+*The slice figures are drawn with the page's own code by `streamlit_dashboard/make_preview.py` (`--case hippocampus_135 --out docs/figures/streamlit_preview_msd.png` for MSD); the 3D figures are browser screenshots.*
+
+**Using the page:**
 
 - **What it shows:** pick an MSD or external crop and one or more runs. You get one row per mask: ground truth, an optional second reference, then each run. Each row has axial, coronal and sagittal views, moved together by the plane sliders in the sidebar.
 - **Colours:** **Labels** shows anterior (orange) and posterior (blue), or the external subfields. **Errors** shows correct (green), wrong part (yellow), missed (blue) and extra (red). Row titles give Dice.
 - **Display options:**
   - **3D surfaces:** rotatable surfaces; hovering shows the position in mm and the matching slice numbers.
-  - **Largest piece only:** applies the post-processing.
+  - **Largest piece only:** applies the post-processing, for external crops only (where the islands are). It is greyed out for MSD images, whose results always use the plain prediction.
 - **ASHS:** for s03 and s17, the ASHS anterior/posterior labels are picked automatically as the **Second reference**. Each run's title then also gives its Dice against ASHS.
-
-## Status
-
-| Step | What | Status |
-|---|---|---|
-| 1 | 3D U-Net on MSD Task04, evaluated with Dice and NSD (1 mm), as in the [Medical Segmentation Decathlon](https://www.nature.com/articles/s41467-022-30695-9) | Done |
-| 1b | External check on MNI-HISUB25 (25 healthy adults): whole-hippocampus Dice 0.811, NSD 0.777, vs 0.897 / 0.959 on MSD test; independent ASHS-PMC-T1 check on 2 subjects. See [Conclusion](#conclusion-first-iteration) and [docs/external_validation.md](docs/external_validation.md) | First iteration done |
-| 2 | Uncertainty: MC dropout and a small ensemble; flag low-confidence cases | Next |
-| 3 | DICOM ingest: de-identify, convert to NIfTI, automatic image QC | Planned |
-| 4 | Cross-site check on IXI (three hospitals): volume distributions per site and vs. age | Planned |
-| 5 | FastAPI service in Docker, CI | Planned |
-| 6 | Model card, risk table | Planned |
 
 ## Data
 
@@ -60,6 +63,16 @@ MSD's own test set has no public labels, so the labelled cases are split 70/15/1
 **External check (MNI-based external dataset):** [MNI-HISUB25](https://www.nitrc.org/projects/mni-hisub25/), downloaded from NITRC (Kulaga-Yoskovitz et al., *Scientific Data* 2015; CC BY-NC-SA 3.0): whole-brain 3T T1 scans of 25 healthy adults in MNI space, with manual hippocampal labels on both sides. Each hippocampus is cut out as a box centred on the dataset's own probability atlas, never on the subject's label. Not used for training.
 
 ## Results: in-distribution vs external (3D U-Net)
+
+> **The 3D U-Net performs best on in-distribution data.** On the MSD test split (39 unseen cases from the same source as the training data), whole-hippocampus Dice is **0.897** and NSD **0.959** (anterior 0.880 / 0.931, posterior 0.868 / 0.942). On the external MNI-HISUB25 data it drops to **0.811 / 0.777** (0.840 / 0.825 after keeping the largest piece). Part of that drop comes from the two datasets labelling the hippocampus differently, not only from model error (see [Limitations](#limitations)).
+
+**In distribution (MSD test, 39 cases), per part:**
+
+![3D U-Net Dice and NSD per part on the MSD test split](docs/figures/msd_test_parts.png)
+
+The two parts score about the same: anterior Dice 0.880 / NSD 0.931, posterior 0.868 / 0.942. Made with `python -m hippo.metrics_plot --runs runs/baseline --names "3D U-Net" --datasets internal_anterior internal_posterior --out docs/figures/msd_test_parts`.
+
+**In distribution vs external:**
 
 ![3D U-Net Dice and NSD on MSD test and on the external dataset](docs/figures/baseline_msd_vs_external.png)
 
@@ -72,10 +85,10 @@ MSD's own test set has no public labels, so the labelled cases are split 70/15/1
 | MNI-HISUB25 (external) | whole hippocampus | **0.811 ± 0.030** | **0.777 ± 0.038** | 50 (25 subjects × left/right) |
 | MNI-HISUB25 (external), largest connected piece only | whole hippocampus | 0.840 ± 0.022 | 0.825 ± 0.034 | 50 |
 
-- **Which rows to compare:** the external labels can only be scored as the whole hippocampus (see below), so the fair comparison is the second row against the third. The figure shows MSD the way it is usually reported (mean of the two parts).
+- **Which rows to compare:** the external labels can only be scored as the whole hippocampus (see below), so the fair comparison is the MSD "whole hippocampus" row against the external rows. The figure shows MSD the way it is usually reported (mean of the two parts).
 - **Left vs right:** external Dice is 0.807 on the left and 0.815 on the right (no difference, p = 0.49).
 - **Figure:** each dot is one case and the bar is the mean. Made with `python -m hippo.metrics_plot --runs runs/baseline --names "3D U-Net" --datasets internal external external_largest --out docs/figures/baseline_msd_vs_external`. The dark orange triangles are the external hippocampi after keeping the largest piece (from `python -m hippo.external ... --largest-piece`).
-- **Main result has no shift or post-processing.** The last row keeps only each prediction's largest connected piece, which removes the stray islands. It improves all 50 hippocampi (Dice 0.811 → 0.840, NSD 0.777 → 0.825), but that step was chosen after looking at the external errors, so it is reported only as a secondary result.
+- **Main result has no shift or post-processing.** Largest-piece post-processing is applied to the **external dataset only**; all MSD (in-distribution) rows and both figures' MSD groups use the plain prediction. The last row keeps only each prediction's largest connected piece, which removes the stray islands. It improves all 50 hippocampi (Dice 0.811 → 0.840, NSD 0.777 → 0.825), but that step was chosen after looking at the external errors, so it is reported only as a secondary result.
 
 Full analysis: [docs/external_validation.md](docs/external_validation.md).
 
