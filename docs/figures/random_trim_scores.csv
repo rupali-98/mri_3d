@@ -1,0 +1,13 @@
+run,dataset,metric,n,mean,median,std
+3D U-Net,internal,dice,39,0.8741,0.8804,0.0344
+3D U-Net,internal,nsd,39,0.9362,0.9562,0.0485
+3D U-Net,external_largest,dice,50,0.8402,0.8426,0.0216
+3D U-Net,external_largest,nsd,50,0.8253,0.8304,0.0344
+3D U-Net,external_msd_crop_largest,dice,50,0.8428,0.8453,0.0208
+3D U-Net,external_msd_crop_largest,nsd,50,0.8288,0.8344,0.0353
+Random position,internal,dice,39,0.8703,0.8776,0.0369
+Random position,internal,nsd,39,0.9317,0.959,0.0535
+Random position,external_largest,dice,50,0.8435,0.8441,0.0189
+Random position,external_largest,nsd,50,0.8325,0.8328,0.0336
+Random position,external_msd_crop_largest,dice,50,0.8492,0.8482,0.018
+Random position,external_msd_crop_largest,nsd,50,0.8424,0.8443,0.0302

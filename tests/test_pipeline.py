@@ -193,3 +193,19 @@ def test_refuses_to_start_when_disk_is_full(tmp_path):
     cfg_path = small_config(tmp_path, min_free_disk_gb=10**9)
     with pytest.raises(SystemExit, match="GB free"):
         train.main(str(cfg_path), data_dir=str(tmp_path / "data"))
+
+
+def test_train_passes_random_trim_from_config(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    make_splits(make_fake_msd(data), data / "splits.json", 0.25, 0.25, seed=1)
+    cfg_path = small_config(tmp_path)
+    cfg = yaml.safe_load(cfg_path.read_text())
+    cfg["data"]["random_trim"] = [0, 0, 5]
+    cfg_path.write_text(yaml.safe_dump(cfg))
+
+    seen = []
+    real = train.make_loaders
+    monkeypatch.setattr(train, "make_loaders", lambda *a: seen.append(a[-1]) or real(*a))
+    train.main(str(cfg_path), data_dir=str(data))
+    assert seen == [[0, 0, 5]]
+    assert (tmp_path / "run" / "best.pt").exists()

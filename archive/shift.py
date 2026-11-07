@@ -51,13 +51,15 @@ from __future__ import annotations
 
 import csv
 import json
+import sys
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
 from scipy.stats import wilcoxon
 
-from hippo import defaults, evaluate, external
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from hippo import defaults, evaluate, external  # noqa: E402
 
 OUT_DIR = "data/shifted"
 EXTERNAL_OUT = "data/shifted_external"

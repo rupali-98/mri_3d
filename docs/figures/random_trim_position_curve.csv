@@ -1,0 +1,21 @@
+run,position_mm,metric,n,mean,median,std
+3D U-Net,-10,dice,50,0.8563,0.8559,0.0143
+3D U-Net,-5,dice,50,0.8512,0.8537,0.0157
+3D U-Net,0,dice,50,0.8402,0.8426,0.0216
+3D U-Net,5,dice,50,0.8238,0.8288,0.034
+3D U-Net,10,dice,50,0.8039,0.8091,0.0347
+3D U-Net,-10,nsd,50,0.8574,0.8566,0.0263
+3D U-Net,-5,nsd,50,0.8469,0.8464,0.0268
+3D U-Net,0,nsd,50,0.8253,0.8304,0.0344
+3D U-Net,5,nsd,50,0.7988,0.8096,0.0494
+3D U-Net,10,nsd,50,0.7616,0.769,0.053
+Random position,-10,dice,50,0.8421,0.841,0.0165
+Random position,-5,dice,50,0.8395,0.8392,0.0191
+Random position,0,dice,50,0.8435,0.8441,0.0189
+Random position,5,dice,50,0.8386,0.844,0.0195
+Random position,10,dice,50,0.8198,0.829,0.0321
+Random position,-10,nsd,50,0.8298,0.83,0.0305
+Random position,-5,nsd,50,0.8265,0.8266,0.0321
+Random position,0,nsd,50,0.8325,0.8328,0.0336
+Random position,5,nsd,50,0.8251,0.8292,0.0364
+Random position,10,nsd,50,0.7932,0.8007,0.0436

@@ -8,6 +8,7 @@ import tarfile
 import urllib.request
 from pathlib import Path
 
+import numpy as np
 from monai.data import CacheDataset, DataLoader
 from monai.transforms import (
     Compose,
@@ -15,13 +16,16 @@ from monai.transforms import (
     EnsureChannelFirstd,
     EnsureTyped,
     LoadImaged,
+    MapTransform,
     NormalizeIntensityd,
     Orientationd,
     RandAffined,
     RandFlipd,
     RandGaussianNoised,
+    Randomizable,
     RandScaleIntensityd,
     RandShiftIntensityd,
+    SpatialCrop,
 )
 
 from . import defaults
@@ -100,7 +104,32 @@ def use_clean_labels(splits: dict, data_dir: str) -> dict:
 NORMALIZE = ("zscore", "none")  # none = raw scanner intensities, for comparison only
 
 
-def base_transforms(normalize: str = "zscore", keys: tuple = ("image", "label")) -> list:
+class RandomTrimd(Randomizable, MapTransform):
+    """Cut `trim` voxels per axis, split at random between the two sides, keeping the label whole."""
+
+    def __init__(self, keys, trim, label_key: str = "label"):
+        MapTransform.__init__(self, keys)
+        self.trim = trim
+        self.label_key = label_key
+
+    def __call__(self, data):
+        d = dict(data)
+        shape = d[self.label_key].shape[1:]
+        found = np.argwhere(np.asarray(d[self.label_key][0]) > 0)
+        start, end = [], []
+        for size, low, last, trim in zip(shape, found.min(0), found.max(0), self.trim):
+            high = size - 1 - last
+            total = min(trim, low + high)  # a tight crop gets trimmed less rather than losing label
+            cut_low = self.R.randint(max(0, total - high), min(total, low) + 1)
+            start.append(cut_low)
+            end.append(size - (total - cut_low))
+        crop = SpatialCrop(roi_start=start, roi_end=end)
+        for key in self.key_iterator(d):
+            d[key] = crop(d[key])
+        return d
+
+
+def base_transforms(normalize: str = "zscore", keys: tuple = ("image", "label"), trim=None) -> list:
     if normalize not in NORMALIZE:
         raise SystemExit(f"data.normalize must be one of {NORMALIZE}, not {normalize!r}")
     t = [
@@ -110,14 +139,17 @@ def base_transforms(normalize: str = "zscore", keys: tuple = ("image", "label"))
     ]
     if normalize == "zscore":
         t.append(NormalizeIntensityd(keys="image", nonzero=True))
+    # After z-scoring, so a trimmed scan has the same intensities as at inference.
+    if trim and any(trim):
+        t.append(RandomTrimd(keys=keys, trim=trim))
     # Crops vary slightly in size; pad so the U-Net's 3 downsamplings divide evenly.
     return t + [DivisiblePadd(keys=keys, k=8)]
 
 
-def train_transforms(normalize: str = "zscore") -> Compose:
+def train_transforms(normalize: str = "zscore", random_trim=None) -> Compose:
     keys = ["image", "label"]
     return Compose(
-        base_transforms(normalize)
+        base_transforms(normalize, trim=random_trim)
         + [
             RandAffined(
                 keys=keys,
@@ -142,8 +174,9 @@ def eval_transforms(normalize: str = "zscore") -> Compose:
     return Compose(base_transforms(normalize) + [EnsureTyped(keys=["image", "label"])])
 
 
-def make_loaders(splits: dict, batch_size: int, num_workers: int, cache_rate: float, normalize: str = "zscore"):
-    train_ds = CacheDataset(splits["train"], train_transforms(normalize), cache_rate=cache_rate,
+def make_loaders(splits: dict, batch_size: int, num_workers: int, cache_rate: float, normalize: str = "zscore",
+                 random_trim=None):
+    train_ds = CacheDataset(splits["train"], train_transforms(normalize, random_trim), cache_rate=cache_rate,
                             num_workers=num_workers)
     val_ds = CacheDataset(splits["val"], eval_transforms(normalize), cache_rate=cache_rate, num_workers=num_workers)
     # Cases differ in size after padding, so validation runs one volume at a time.

@@ -1,9 +1,9 @@
 # Hippocampus Segmentation and Volumetry on 3D MRI
 
 **Quick links:**
-- **Figures:** [MSD test per part](docs/figures/msd_test_parts.png), [Dice and NSD, MSD test vs external](docs/figures/baseline_msd_vs_external.png) ([table](#results)) and the Streamlit dashboard previews ([MSD test](docs/figures/streamlit_preview_msd.png), [external](docs/figures/streamlit_preview.png)).
+- **Figures:** [MSD test per part](docs/figures/msd_test_parts.png), [Dice and NSD, MSD test vs external](docs/figures/baseline_msd_vs_external.png) ([table](#results)), the retraining experiment ([scores](docs/figures/random_trim_scores.png), [position curve](docs/figures/random_trim_position_curve.png)) and the Streamlit dashboard previews ([MSD test](docs/figures/streamlit_preview_msd.png), [external](docs/figures/streamlit_preview.png)).
 - **Streamlit dashboard:** [how to run it](#viewing-results-in-streamlit). It runs locally at http://localhost:8501.
-- **Write-ups:** [Conclusion](#conclusion-first-iteration) and the [external validation report](docs/external_validation.md).
+- **Write-ups:** [Conclusion](#conclusion-first-iteration), the [external validation report](docs/external_validation.md) and the [retraining experiment](docs/retraining_plan.md).
 
 A research pipeline that outlines the hippocampus on 3D T1-weighted MRI with a 3D U-Net, splits it into an anterior and a posterior part, and measures the volume of each part.
 
@@ -158,6 +158,57 @@ The two parts score about the same: anterior Dice 0.880 / NSD 0.931, posterior 0
 - **Figures:** each dot is one case and the bar is the mean. The dark orange triangles are the external hippocampi after keeping the largest piece.
 - **Main result has no shift or post-processing.** Largest-piece post-processing is applied to the **external dataset only**; all MSD rows and both figures' MSD groups use the plain prediction. Keeping the largest piece removes stray islands and improves all 50 external hippocampi (Dice 0.811 → 0.840, NSD 0.777 → 0.825), but that step was chosen after looking at the external errors, so it is a secondary result.
 
+### Experiment: training with the hippocampus in varying positions
+
+External Dice depends on where the crop box sits around the hippocampus, because MSD crops always centre it. So a second model was trained with one change: each training crop loses 5 voxels in z, split at random between top and bottom, so the hippocampus lands in a different place each time (`configs/random_trim.yaml`). All voxels stay real tissue and the label is never cut. MSD crops leave about 5 mm of tissue above and below the hippocampus, which is enough room, but it only moves the hippocampus about ±2.5 mm from the window centre. Everything else is unchanged, and the success criteria were written down before training ([plan and full results](docs/retraining_plan.md)).
+
+**Outcome: the 3D U-Net stays the main model.** The new model is less sensitive to box position and slightly better on external scans, but it narrowly failed one pre-set criterion and scores slightly lower on MSD.
+
+| Test set | Scored as | 3D U-Net (Dice / NSD) | Random position (Dice / NSD) | Dice change: better / worse cases, p |
+|---|---|---|---|---|
+| MSD test | mean of anterior and posterior | 0.874 / 0.936 | 0.870 / 0.932 | 13 / 26, p = 0.03 |
+| MNI-HISUB25, MSD-style box, largest piece | whole hippocampus | 0.843 / 0.829 | 0.849 / 0.842 | 35 / 15, p = 0.003 |
+| MNI-HISUB25, atlas box, largest piece | whole hippocampus | 0.840 / 0.825 | 0.844 / 0.833 | 29 / 21, p = 0.34 |
+
+![Dice and NSD of the 3D U-Net and the random position model on MSD test and on external data](docs/figures/random_trim_scores.png)
+
+*Each mark is one case and the bar is the mean. The external "largest piece only" group uses the atlas box. MSD test and external use different label definitions, so compare the two models within a group.*
+
+The MSD-style box is the first prediction's bounding box plus MSD's usual margin, so placing it uses no external labels.
+
+**Moving the atlas box up or down** (50 external hippocampi, largest piece):
+
+![Dice and NSD against the hippocampus's height in the crop box for both models](docs/figures/random_trim_position_curve.png)
+
+*The vertical axes do not start at 0, so small differences look larger than in the figure above. Negative: the box moved up, leaving less tissue below the hippocampus. Positive: the box moved down, leaving more tissue below.*
+
+| Hippocampus height in the box (Dice) | −10 mm | −5 mm | 0 | +5 mm | +10 mm | Range |
+|---|---|---|---|---|---|---|
+| 3D U-Net | 0.856 | 0.851 | 0.840 | 0.824 | 0.804 | 0.052 |
+| Random position | 0.842 | 0.840 | 0.844 | 0.839 | 0.820 | 0.024 |
+
+- **Position sensitivity:** the range across box positions halves, but the average barely moves (0.835 → 0.837). The new model is better when the box sits too low (hippocampus +5 and +10 mm, p < 0.001) and worse where the 3D U-Net already did well (−5 and −10 mm, p < 0.001). That lower best point (0.844 vs 0.856) is the criterion it failed: the limit was a drop of 0.01, and the drop was 0.013.
+- **Islands:** volume removed by keeping the largest piece drops from 0.333 to 0.109 ml on the atlas box (lower in 40 of 50, p < 0.001).
+- **Missing tissue remains:** on the MSD-style box the model still misses 15.8% of the external hippocampus (17.5% before). Moving the hippocampus during training cannot teach tissue that the MSD labels leave out, so external Dice stays well below MSD's whole-hippocampus 0.897.
+
+**Where the errors changed** (plain atlas box, before keeping the largest piece; mean per external hippocampus, paired over 50 cases):
+
+| Error | 3D U-Net | Random position | Lower / higher in | p |
+|---|---:|---:|---:|---:|
+| Extra voxels, total | 1.12 ml | 0.91 ml | 38 / 12 | < 0.001 |
+| Extra: islands (separate pieces) | 0.33 ml | 0.11 ml | 40 / 9 | < 0.001 |
+| Extra: within 1 mm of the label | 0.55 ml | 0.64 ml | 0 / 50 | < 0.001 |
+| Missed voxels, total | 0.71 ml | 0.66 ml | 34 / 16 | 0.001 |
+| Missed: within 1 mm of the prediction | 0.40 ml | 0.36 ml | 45 / 5 | < 0.001 |
+| Missed: chunks more than 1 mm away | 0.31 ml | 0.31 ml | 21 / 29 | 0.93 |
+
+- **Islands:** the new model removes most of the islands below the hippocampus, the error linked to cropping.
+- **Missed chunks:** they don't change at all. Most missed voxels are on the inner side (median 86% per hippocampus) and in the subiculum, the tissue MSD's labels leave out.
+- **The missed voxels it does recover lie at the edge:** its outline sits slightly wider, which also adds extra voxels at the edge in all 50 hippocampi and further into the tail (0.16 → 0.28 ml).
+
+So the remaining external gap comes from what the training labels contain, not from where the crop is cut.
+- **Evidence:** one training seed per model, and the external data has guided earlier decisions, so this is not an independent test.
+
 ## Known limitations
 
 - **The training labels do not cover the whole hippocampus.** MSD Task04 was chosen because of GPU limits: its small crops train on a small GPU. But its labels include only "the hippocampus proper and parts of the subiculum" and leave out the thin inner (medial) extensions: the tip of the subiculum, the uncus and a strip along the tail. The model learned exactly that, so it draws a narrower hippocampus than labels that include this tissue. Across all labels, MSD hippocampi are 3–5 mm narrower and 2–3 mm lower than the external ones at the same length (39 vs 38 mm).
@@ -168,7 +219,7 @@ The two parts score about the same: anterior Dice 0.880 / NSD 0.931, posterior 0
 - **Predictions must not be shifted to fit the external labels.** The prediction's centre is offset the same way in every subject, but that is a difference in shape, not position: shifting lowered Dice from 0.840 to 0.794 on held-out subjects (47 of 50 worse).
 - **Possible subject overlap between train and test.** MSD gives no subject IDs, so the split is by file. Neighbouring files (`2k-1`, `2k`) may be the left and right hippocampus of one person; if so, 22 of the 39 test cases have their possible partner in training, and test scores may be optimistic. The external dataset (different people) is an independent check.
 - **No subject or side information in MSD.** No subject ID, left/right side, age, sex, diagnosis or scanner per file, and the image positions are reset. So results cannot be compared by side or by group, and the split can only be by file. The 390 files fit one left and one right hippocampus for each of 195 people, but which files belong together is not recorded.
-- **The model depends on its surroundings.** Adding an artificial zero border to MSD crops lowered Dice from 0.874 to 0.833, so crops must look like the training crops.
+- **The model depends on its surroundings.** Adding an artificial zero border to MSD crops lowered Dice from 0.874 to 0.833, so crops must look like the training crops. On external scans, moving the box ±10 mm in z changes Dice by up to 0.052; [training with varying positions](#experiment-training-with-the-hippocampus-in-varying-positions) halves that but does not remove it.
 - **Small evidence base.** One training seed; the external set is 25 healthy adults from one site and scanner, in MNI space (so its volumes are scaled to a template); the ASHS check covers 4 hippocampi, too few for a p-value; the external label part names were inferred from the atlas.
 
 ## Future improvements
@@ -291,7 +342,7 @@ The tests check the metrics on hand-made cases and run the whole pipeline (split
 ## Project structure
 
 ```
-configs/                experiment settings (baseline.yaml, clean_labels.yaml, no_norm.yaml)
+configs/                experiment settings (baseline.yaml, clean_labels.yaml, no_norm.yaml, random_trim.yaml)
 src/hippo/defaults.py   default paths, shared command-line options, device choice
 src/hippo/data.py       download, splits, preprocessing and augmentation, loaders
 src/hippo/model.py      3D U-Net (MONAI)
@@ -304,7 +355,7 @@ src/hippo/metrics_plot.py  Dice/NSD figures and tables per run and dataset
 src/hippo/visualize.py  slice figure, 3D surfaces and volumes for one case
 src/hippo/explore.py, clean.py   data quality checks and label cleaning
 streamlit_dashboard/    the dashboard (compare_slices.py) and its preview images (make_preview.py)
-docs/                   external validation report and README figures
+docs/                   external validation report, retraining experiment and README figures
 tests/                  unit and end-to-end tests
 ```
 
@@ -315,6 +366,7 @@ tests/                  unit and end-to-end tests
 3. **An independent model confirms the label difference.** ASHS-PMC-T1, run on the whole-brain T1 of s03 and s17 (4 hippocampi), lands on the external manual labels: its centre is within 0.8 mm of theirs. The model's centre is 1.8–3.3 mm off, always outwards, forwards and lower, because it draws MSD's narrower hippocampus. So the external labels are in the right place, and the offset comes from what the model was taught.
 4. **The anterior/posterior split agrees reasonably with ASHS:** Dice 0.80 (anterior) and 0.74 (posterior) on the same 4 hippocampi. The model puts the front/back boundary 2–6 mm further forward than ASHS does; MSD's exact boundary rule is not published, so neither is "right". For the whole hippocampus against the manual labels, the model after largest-piece post-processing matches ASHS (0.841 vs 0.840; plain model 0.808).
 5. **Accurate out-of-distribution metrics are not possible yet.** No public dataset labelled with MSD's anterior/posterior protocol was found, so the external Dice of 0.811 mixes model error with the protocol difference. ASHS cannot be run on MSD to check MSD's protocol directly: it needs a whole-head scan, and on two MSD crops it failed once and returned an empty segmentation once.
-6. **Next experiment: a different training dataset**, with whole-hippocampus labels on whole-head scans and patch-based training, so that training, external tests and tools such as ASHS all see the same kind of image.
+6. **Retraining with varying positions helps only part of the gap.** It halves the sensitivity to box position and reduces islands, with external Dice 0.849 vs 0.843 on the MSD-style box and MSD test Dice 0.870 vs 0.874. It narrowly failed one pre-set criterion, so the 3D U-Net stays the main model. It removes most islands, but the missed chunks on the inner side are unchanged (0.31 ml per hippocampus before and after), so it cannot add tissue that the training labels leave out ([details](#experiment-training-with-the-hippocampus-in-varying-positions)).
+7. **Next experiment: a different training dataset**, with whole-hippocampus labels on whole-head scans and patch-based training, so that training, external tests and tools such as ASHS all see the same kind of image.
 
 These are results on 2 small datasets and one training seed; the ASHS check covers 4 hippocampi, too few for a p-value. Full details: [docs/external_validation.md](docs/external_validation.md).

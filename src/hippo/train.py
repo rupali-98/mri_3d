@@ -103,8 +103,9 @@ def main(
     elif labels != "raw":
         raise SystemExit(f"data.labels must be raw or clean, not {labels!r}")
     normalize = cfg["data"].get("normalize", "zscore")  # runs from before this setting used zscore
+    random_trim = cfg["data"].get("random_trim")  # runs from before this setting had no trimming
     train_loader, val_loader = make_loaders(
-        splits, t["batch_size"], cfg["data"]["num_workers"], cfg["data"]["cache_rate"], normalize
+        splits, t["batch_size"], cfg["data"]["num_workers"], cfg["data"]["cache_rate"], normalize, random_trim
     )
 
     model = build_model(cfg).to(device)
@@ -140,7 +141,7 @@ def main(
             run_id = mlflow.active_run().info.run_id
             if start_epoch == 1:
                 mlflow.log_params({**cfg["model"], **{k: v for k, v in t.items() if k != "out_dir"},
-                                   "labels": labels, "normalize": normalize})
+                                   "labels": labels, "normalize": normalize, "random_trim": random_trim})
         for epoch in range(start_epoch, epochs + 1):
             # Reseed shuffling, augmentation and dropout from the epoch number, so a
             # resumed run sees exactly the batches an uninterrupted run would have.

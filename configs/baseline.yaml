@@ -10,6 +10,7 @@ data:
   cache_rate: 1.0                       # dataset is ~30 MB; cache all in RAM
   labels: raw                           # raw, or clean = train on hippo.clean output (val/test stay raw)
   normalize: zscore                     # zscore (per scan), or none = raw intensities (comparison only)
+  random_trim: [0, 0, 0]                # training only: voxels cut per axis (x, y, z), split at random between the two sides, label kept whole
 
 model:
   channels: [16, 32, 64, 128]
