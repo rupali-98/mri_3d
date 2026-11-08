@@ -6,3 +6,7 @@ data/
 *.nii
 *.nii.gz
 *.dcm
+.venv/
+runs/
+.claude/
+.agents/

@@ -1,0 +1,35 @@
+# The API image (hippo.api): CPU only, the model package baked in, for Cloud Run or any container host.
+# Build it in the cloud (deploy/cloudbuild.yaml) or locally:
+#     python -m hippo.package_model --experiment runs/baseline --src data/mri_dataset --single
+#     docker build -f Dockerfile.api -t hippo-api .
+#     docker run -p 8080:8080 hippo-api          # then open http://localhost:8080/docs
+# Research use only, not for diagnosis.
+FROM python:3.11.17-slim-trixie
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# CPU build of PyTorch first (far smaller than the default CUDA build; Cloud Run has no GPU here), then the
+# rest. Requirements are copied before the code so this slow layer is cached until they change.
+COPY requirements-api.txt .
+RUN pip install torch==2.14.1 --index-url https://download.pytorch.org/whl/cpu && \
+    pip install -r requirements-api.txt
+
+COPY src/ src/
+COPY deploy/model/ deploy/model/
+
+# Not root: if the service were ever broken into, it couldn't change the image
+RUN useradd --create-home --uid 1000 api
+USER api
+
+ENV PYTHONPATH=/app/src \
+    HIPPO_MODEL_DIR=/app/deploy/model \
+    HIPPO_MLFLOW=0 \
+    PORT=8080
+EXPOSE 8080
+
+# Cloud Run sets PORT; exec makes uvicorn the main process, so it receives the stop signal and shuts down cleanly
+CMD exec uvicorn hippo.api:app --host 0.0.0.0 --port ${PORT}

@@ -1,0 +1,10 @@
+# Google Cloud Build: build Dockerfile.api in the cloud (Linux/amd64, as Cloud Run needs) and push it to
+# Artifact Registry. Run from the project root after packaging the model (docs/deployment.md):
+#     gcloud builds submit --config deploy/cloudbuild.yaml \
+#         --substitutions _IMAGE=us-central1-docker.pkg.dev/PROJECT_ID/hippo/api:VERSION .
+# What gets uploaded is limited by .gcloudignore.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "Dockerfile.api", "-t", "${_IMAGE}", "."]
+images:
+  - "${_IMAGE}"

@@ -10,3 +10,6 @@ __pycache__/
 .venv/
 .pytest_cache/
 hippo.conf
+
+# model package for the API (hippo.package_model): weights are not kept in git
+deploy/model/

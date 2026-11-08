@@ -1,0 +1,14 @@
+# What `gcloud builds submit` uploads to Cloud Build: only what Dockerfile.api needs.
+# Without this file gcloud would follow .gitignore, which leaves out deploy/model/ (the model package).
+# Never upload data/ or runs/: scans and labels stay on this machine.
+# Check before building:  gcloud meta list-files-for-upload
+*
+!Dockerfile.api
+!requirements-api.txt
+!src/
+!src/hippo/
+!src/hippo/**
+!deploy/
+!deploy/model/
+!deploy/model/**
+**/__pycache__/
