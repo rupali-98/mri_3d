@@ -11,5 +11,15 @@ __pycache__/
 .pytest_cache/
 hippo.conf
 
+# Docker Compose settings and secrets (compose.yaml; .env.example is the template)
+.env
+secrets/
+
 # model package for the API (hippo.package_model): weights are not kept in git
 deploy/model/
+
+# Example scans for the upload page (hippo.examples): copied to the bucket, not kept in git
+deploy/examples/
+
+# zipped model package (hippo.package_model): weights are not kept in git
+deploy/model.zip

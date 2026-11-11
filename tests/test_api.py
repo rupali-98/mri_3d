@@ -2,6 +2,7 @@
 import base64
 import gzip
 import json
+import shutil
 
 import nibabel as nib
 import numpy as np
@@ -11,7 +12,7 @@ import yaml
 from fastapi.testclient import TestClient
 
 from hippo import package_model
-from hippo.api import create_app
+from hippo.api import create_app, env_api_key, load_models
 from hippo.data import make_splits
 from hippo.model import build_model
 
@@ -115,6 +116,18 @@ def test_upload_limit_and_api_key(tmp_path):
         assert client.get("/model", headers={"X-API-Key": "secret"}).status_code == 200
 
 
+def test_api_key_from_file(tmp_path, monkeypatch):
+    """Docker Compose secrets arrive as a file; the variable itself wins when both are set."""
+    monkeypatch.delenv("HIPPO_API_KEY", raising=False)
+    monkeypatch.delenv("HIPPO_API_KEY_FILE", raising=False)
+    assert env_api_key() is None
+    (tmp_path / "api_key").write_text("from-file\n")
+    monkeypatch.setenv("HIPPO_API_KEY_FILE", str(tmp_path / "api_key"))
+    assert env_api_key() == "from-file"
+    monkeypatch.setenv("HIPPO_API_KEY", "from-env")
+    assert env_api_key() == "from-env"
+
+
 def test_mni_scan_gives_both_sides(tmp_path):
     out, _ = _package(tmp_path)
     brain = _nifti(shape=(64, 48, 40))
@@ -139,3 +152,59 @@ def test_mni_needs_the_boxes(tmp_path):
     with TestClient(create_app(str(out))) as client:
         assert client.get("/model").json()["endpoints"]["mni"] is False
         assert _post(client, "/segment/mni", _nifti(shape=(64, 48, 40))).status_code == 501
+
+
+def test_crop_largest_piece(tmp_path):
+    out, task = _package(tmp_path)
+    upload = (task / "imagesTr" / "hippocampus_000.nii.gz").read_bytes()
+    with TestClient(create_app(str(out))) as client:
+        plain = _post(client, "/segment/crop", upload).json()
+        kept = _post(client, "/segment/crop", upload, largest="true", include_mask="true").json()
+    assert plain["post_processing"] == "none" and "removed_ml" not in plain["hippocampi"][0]
+    h = kept["hippocampi"][0]
+    assert kept["post_processing"] == "largest piece" and h["qc"]["pieces"] <= 1
+    assert h["qc_before_post_processing"] == plain["hippocampi"][0]["qc"]          # the plain mask's checks kept
+    removed = plain["hippocampi"][0]["volumes_ml"]["whole"] - h["volumes_ml"]["whole"]
+    assert h["removed_ml"] == pytest.approx(removed, abs=2e-3)
+
+
+def _versions(tmp_path):
+    """A model folder like the multi-model cloud build writes: the default at the root, others in versions/."""
+    out, task = _package(tmp_path)
+    for name in ("champion", "other"):
+        shutil.copytree(out, out / "versions" / name, ignore=shutil.ignore_patterns("versions"))
+    meta = json.loads((out / "versions" / "other" / "metadata.json").read_text())
+    meta["version"] = "other0000000"                                  # a different model
+    (out / "versions" / "other" / "metadata.json").write_text(json.dumps(meta))
+    (out / "default_model").write_text("champion\n")
+    return out, task
+
+
+def test_several_models(tmp_path):
+    out, task = _versions(tmp_path)
+    upload = (task / "imagesTr" / "hippocampus_000.nii.gz").read_bytes()
+    with TestClient(create_app(str(out))) as client:
+        listing = client.get("/models").json()
+        assert listing["default"] == "champion"
+        assert {m["key"]: m["default"] for m in listing["models"]} == {"champion": True, "other": False}
+        assert _post(client, "/segment/crop", upload).json()["model"]["key"] == "champion"     # no ?model=: default
+        chosen = _post(client, "/segment/crop", upload, model="other").json()["model"]
+        assert chosen == {"key": "other", "name": "3D U-Net", "version": "other0000000"}
+        assert client.get("/model", params={"model": "other"}).json()["version"] == "other0000000"
+        r = _post(client, "/segment/mni", _nifti(shape=(64, 48, 40)), model="nope")
+        assert r.status_code == 404 and "available: ['champion', 'other']" in r.json()["detail"]
+
+
+def test_default_model_rules(tmp_path, monkeypatch):
+    out, _ = _versions(tmp_path)
+    models, default = load_models(out)
+    assert default == "champion" and models["champion"] is not models["other"]
+    assert len({id(m) for m in models.values()}) == 2                 # the root shares champion's copy
+    monkeypatch.setenv("HIPPO_DEFAULT_MODEL", "other")
+    assert load_models(out)[1] == "other"
+    monkeypatch.setenv("HIPPO_DEFAULT_MODEL", "missing")
+    with pytest.raises(SystemExit, match="No model package called 'missing'"):
+        load_models(out)
+    monkeypatch.delenv("HIPPO_DEFAULT_MODEL")
+    single, _ = _package(tmp_path / "single")                          # an old single-model folder still works
+    assert list(load_models(single)[0]) == ["default"]

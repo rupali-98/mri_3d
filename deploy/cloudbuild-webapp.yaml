@@ -1,0 +1,11 @@
+# Google Cloud Build: build the upload page's image (webapp/Dockerfile) and push it to Artifact Registry.
+# It holds no model: the page calls the API, whose model comes from the MLflow bucket (deploy/cloudbuild.yaml).
+# From the project root (docs/deployment.md, "The upload page"):
+#     gcloud builds submit --config deploy/cloudbuild-webapp.yaml \
+#         --substitutions _IMAGE=europe-west1-docker.pkg.dev/PROJECT_ID/hippo/webapp:TAG .
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "webapp/Dockerfile", "-t", "${_IMAGE}", "."]
+images:
+  - "${_IMAGE}"

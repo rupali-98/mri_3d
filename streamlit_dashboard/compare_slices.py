@@ -7,6 +7,11 @@ axial, coronal and sagittal views; the three plane sliders in the sidebar move t
 same slice in every row. Ticking "3D surfaces" adds a rotatable 3D view of each
 mask below the slices (same colours, same Labels/Errors switch).
 
+Runs: single runs (runs/<name>/best.pt), each cross-validation fold (runs/<name>/fold<k>/best.pt), and
+for an experiment with folds a "<name>: 5-fold average" entry that averages the fold models' class
+probabilities before taking the most likely label (an ensemble). Folds are listed but not ticked by
+default, so the page opens with the single runs and the averages.
+
 Predictions are saved to runs/figures/notebook/<case>_pred_<run>.nii.gz (the folder
 keeps its old name), so ITK-SNAP or 3D Slicer can open them. Research use only, not for diagnosis.
 
@@ -45,16 +50,50 @@ PANELS_PER_LINE = 3  # 3D views side by side
 ASHS = Path("data/ashs/labelsTr")  # ASHS-PMC-T1 anterior/posterior on the external crops (archive/external_analysis/ashs_labels.py)
 LIGHT = dict(ambient=0.45, diffuse=0.8, specular=0.25, roughness=0.6)
 # 3D hover: the part, its world position and the slices to move the plane sliders to
+AVERAGE = "folds-average"  # runs/<experiment>/folds-average: not a folder, the average of its fold models
 HOVER = ("<b>%{fullData.name}</b><br>x %{x:.1f}  y %{y:.1f}  z %{z:.1f} mm<br>"
          "sliders: sagittal %{customdata[0]}, coronal %{customdata[1]}, axial %{customdata[2]}<extra></extra>")
 
 
+def fold_runs(experiment) -> list[Path]:
+    return sorted(p.parent for p in Path(experiment).glob("fold*/best.pt"))
+
+
+def members(run: str) -> list[Path]:
+    """The trained runs behind a run entry: the fold models for an average, else the run itself."""
+    run = Path(run)
+    return fold_runs(run.parent) if run.name == AVERAGE else [run]
+
+
+def run_name(run: str) -> str:
+    """How a run is named on the page: baseline, baseline/fold0, baseline: 5-fold average."""
+    run = Path(run)
+    if run.name == AVERAGE:
+        return f"{run.parent.name}: {len(fold_runs(run.parent))}-fold average"
+    return f"{run.parent.name}/{run.name}" if run.name.startswith("fold") else run.name
+
+
+def list_runs() -> tuple[list[str], list[str]]:
+    """All run entries (each experiment: single run, fold average, folds) and the ones ticked by default."""
+    singles = {p.parent for p in Path("runs").glob("*/best.pt")}
+    experiments = sorted(singles | {p.parent.parent for p in Path("runs").glob("*/fold*/best.pt")})
+    found, default = [], []
+    for exp in experiments:
+        folds = fold_runs(exp)
+        here = ([str(exp)] if exp in singles else []) + ([str(exp / AVERAGE)] if len(folds) > 1 else [])
+        found += here + [str(f) for f in folds]
+        default += here
+    return found, default
+
+
 def predict(run: str, image: str) -> Path:
     """Save the run's prediction for `image` as NIfTI (aligned with the MRI by its affine); returns the path."""
-    run = Path(run)
-    normalize = yaml.safe_load((run / "config.yaml").read_text())["data"].get("normalize", "zscore")
-    d = visualize.load(Path(image), None, normalize)
-    mask = visualize.predict(run, d["image"])
+    runs = members(run)
+    settings = {yaml.safe_load((r / "config.yaml").read_text())["data"].get("normalize", "zscore") for r in runs}
+    if len(settings) != 1:
+        raise ValueError(f"the fold models of {run} use different preprocessing ({sorted(settings)}); can't average them")
+    d = visualize.load(Path(image), None, settings.pop())
+    mask = visualize.predict(runs[0], d["image"]) if len(runs) == 1 else visualize.predict_average(runs, d["image"])
     OUT.mkdir(parents=True, exist_ok=True)
     case = Path(image).name.split(".nii")[0]
     parts = Path(image).parts
@@ -62,7 +101,7 @@ def predict(run: str, image: str) -> Path:
         # data/<set>/<condition>/imagesTr/<case> (archive/shift.py, external --recentre): one file per condition,
         # so it doesn't overwrite the prediction of the usual crop of the same case
         case += f"_{parts[-4]}_{parts[-3]}"
-    path = OUT / f"{case}_pred_{run.name}.nii.gz"
+    path = OUT / f"{case}_pred_{run_name(run).replace(': ', '_').replace('/', '_').replace(' ', '_')}.nii.gz"
     nib.save(nib.Nifti1Image(mask.astype(np.uint8), np.asarray(d["image"].affine, dtype=np.float64)), path)
     return path
 
@@ -152,7 +191,7 @@ st.caption("Research use only, not for diagnosis.")
 # (whole-brain scans such as data/mri_dataset are left out; the model was trained on crops)
 files = [f for f in list_nifti() if Path(f).parent.name.startswith("images")]
 truths = [f for f in list_nifti() if Path(f).parent.name.startswith("labels")]
-runs_found = sorted(str(p.parent) for p in Path("runs").glob("*/best.pt"))
+runs_found, runs_default = list_runs()
 
 with st.sidebar:
     st.header("Image and runs")
@@ -169,7 +208,9 @@ with st.sidebar:
                                index=second_options.index(ashs) if ashs in truths else 0, key=f"second::{image}",
                                help="Shown as its own row, scored against the ground truth; each run is also "
                                     "scored against it. ASHS-PMC-T1 crops are in data/ashs/labelsTr")
-    runs = st.multiselect("Runs", runs_found, default=runs_found, format_func=lambda r: Path(r).name)
+    runs = st.multiselect("Runs", runs_found, default=runs_default, format_func=run_name,
+                          help="Single runs and 5-fold averages are ticked; add single folds (e.g. baseline/fold0) "
+                               "to compare them. An average combines the fold models' probabilities")
     if st.button("Predict and show", type="primary", disabled=not (image and runs)):
         st.session_state["shown"] = {"image": image, "truth": truth_path, "second": second_path, "runs": runs}
         for _, axis, _, _ in VIEWS:  # new image: sliders start again at the hippocampus
@@ -203,6 +244,8 @@ if not shown:
         "red = extra. External crops (subfield labels) compare the whole hippocampus only, so there is no yellow.\n"
         "- Ground truth row: anterior/posterior (MSD), or gold = CA1-3, green = subiculum, purple = CA4-DG "
         "(external, names inferred from the atlas).\n"
+        "- **Runs**: single runs and each experiment's **5-fold average** (the fold models' probabilities "
+        "averaged) are ticked; single folds such as `baseline/fold0` can be added to compare them.\n"
         "- **3D surfaces** (Display): a rotatable 3D view of each mask below the slices, with the ground truth "
         "as a faint grey ghost in each run's view.\n"
         "- **Largest piece only** (Display, external crops only): post-processing that keeps each prediction's "
@@ -220,7 +263,7 @@ if not shown:
         "(`hippo.external --recentre`; e.g. `recentred/ s03_L`). Whole-brain scans are not listed (the model expects crops): open them in ITK-SNAP or 3D Slicer."
     )
     if not runs_found:
-        st.warning("No trained runs found (runs/*/best.pt).")
+        st.warning("No trained runs found (runs/*/best.pt or runs/*/fold*/best.pt).")
     st.stop()
 
 try:
@@ -243,10 +286,10 @@ try:
         rows.append((title, second, rgb_colours(label_colours(set(np.unique(second).tolist()) - {0})),
                      error_map(second, truth, parts and parts2) if truth is not None else None))
     for run in shown["runs"]:
-        stamp = (os.path.getmtime(Path(run) / "best.pt"), os.path.getmtime(shown["image"]))
-        with st.spinner(f"Predicting with {Path(run).name} ..."):
+        stamp = (*(os.path.getmtime(r / "best.pt") for r in members(run)), os.path.getmtime(shown["image"]))
+        with st.spinner(f"Predicting with {run_name(run)} ..."):
             pred = prediction(run, shown["image"], stamp)
-        name = Path(run).name
+        name = run_name(run)
         if largest:
             pred, pieces = largest_piece(pred)
             name += f" (largest of {pieces} pieces)"

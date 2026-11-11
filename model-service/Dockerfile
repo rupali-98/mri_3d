@@ -1,3 +1,8 @@
+# Model service: training and evaluation (hippo.train, evaluate, external, results, ...) on a Linux/NVIDIA
+# machine. The only image with CUDA torch and a GPU. compose.yaml mounts the project folder at /workspace,
+# so code, data/ and runs/ stay on the host:
+#     docker compose --profile gpu run --rm model-service python -m hippo.train --config configs/baseline.yaml
+# On macOS use the native venv instead: Docker can't reach the Apple GPU (MPS).
 FROM python:3.11.17-slim-trixie
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -14,7 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /workspace
 
-# CPU build of PyTorch by default; see README for the GPU variant
+# CPU build of PyTorch by default; compose.yaml passes the CUDA index (TORCH_INDEX_URL in .env)
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 # Pinned so rebuilds don't silently pull a new multi-GB release; keep in step with requirements.txt
 ARG TORCH_VERSION=2.14.1
@@ -54,7 +59,5 @@ ENV CLAUDE_CONFIG_DIR=/home/${USERNAME}/.claude
 # Lets `python -m hippo.*` find the package in src/ without installing it
 ENV PYTHONPATH=/workspace/src
 
-EXPOSE 8888 5000
-
-# A shell by default; docker-compose.yml starts JupyterLab instead
+# A shell by default; give a command to `docker compose run` to train or evaluate instead
 CMD ["bash"]

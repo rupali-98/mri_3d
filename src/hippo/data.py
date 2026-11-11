@@ -1,4 +1,14 @@
-"""Dataset download, patient-level splits and MONAI data loaders."""
+"""Dataset download, splits and MONAI data loaders.
+
+The labelled MSD cases are split by file into train, validation and test (data/splits.json). With
+--folds K, the train and validation cases are also split into K folds for cross-validation:
+data/folds/fold<k>.json validates on fold k and trains on the rest. The test split is the same in every
+fold and is never trained on or used to pick weights; the external dataset is test-only as well.
+
+Usage:
+    python -m hippo.data                # download MSD Task04, write data/splits.json
+    python -m hippo.data --folds 5      # also write data/folds/fold0.json ... fold4.json
+"""
 from __future__ import annotations
 
 import csv
@@ -75,6 +85,33 @@ def make_splits(root: Path, out: Path, val_fraction: float, test_fraction: float
     out.write_text(json.dumps(splits, indent=2))
     print({k: len(v) for k, v in splits.items()})
     return splits
+
+
+def fold_file(data_dir, fold: int) -> Path:
+    return Path(data_dir) / "folds" / f"fold{fold}.json"
+
+
+def make_folds(split_file: Path, k: int, seed: int) -> list[dict]:
+    """K cross-validation folds over the train and validation cases of `split_file`; test stays as it is.
+
+    By file, like the split itself: files 2k-1 and 2k (possibly one person's two sides) can land in
+    different folds, so validation scores may be slightly optimistic (a known limitation).
+    """
+    splits = json.loads(Path(split_file).read_text())
+    pool = sorted(splits["train"] + splits["val"], key=lambda c: c["image"])
+    random.Random(seed).shuffle(pool)
+    groups = [pool[i::k] for i in range(k)]
+    folds = []
+    for i in range(k):
+        fold = {"train": [c for j, g in enumerate(groups) if j != i for c in g], "val": groups[i],
+                "test": splits["test"]}
+        path = fold_file(Path(split_file).parent, i)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(fold, indent=2))
+        folds.append(fold)
+    print(f"{k} folds of {len(pool)} cases ({', '.join(str(len(g)) for g in groups)} validation cases); "
+          f"test {len(splits['test'])} cases in every fold")
+    return folds
 
 
 def use_clean_labels(splits: dict, data_dir: str) -> dict:
@@ -204,6 +241,10 @@ if __name__ == "__main__":
     p.add_argument("--val-fraction", type=float, default=0.15)
     p.add_argument("--test-fraction", type=float, default=0.15)
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--folds", type=int, help="Also split train + validation into this many folds (data/folds/)")
     a = p.parse_args()
     root = download(Path(a.data_dir))
-    make_splits(root, Path(a.data_dir) / defaults.SPLIT_FILENAME, a.val_fraction, a.test_fraction, a.seed)
+    split_file = Path(a.data_dir) / defaults.SPLIT_FILENAME
+    make_splits(root, split_file, a.val_fraction, a.test_fraction, a.seed)
+    if a.folds:
+        make_folds(split_file, a.folds, a.seed)

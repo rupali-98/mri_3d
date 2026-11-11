@@ -1,9 +1,9 @@
-# The API image (hippo.api): CPU only, the model package baked in, for Cloud Run or any container host.
-# Build it in the cloud (deploy/cloudbuild.yaml) or locally:
+# Backend: the FastAPI service (hippo.api), which also runs the model on the uploads. CPU only, the model
+# package baked in, for Cloud Run or any container host. Built from the project root (the context must hold
+# src/ and deploy/model/):
 #     python -m hippo.package_model --experiment runs/baseline --src data/mri_dataset --single
-#     docker build -f Dockerfile.api -t hippo-api .
-#     docker run -p 8080:8080 hippo-api          # then open http://localhost:8080/docs
-# Research use only, not for diagnosis.
+#     docker compose up --build backend        # or: docker build -f backend/Dockerfile -t hippo-api .
+# In the cloud: deploy/cloudbuild.yaml. Research use only, not for diagnosis.
 FROM python:3.11.17-slim-trixie
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -19,6 +19,7 @@ RUN pip install torch==2.14.1 --index-url https://download.pytorch.org/whl/cpu &
     pip install -r requirements-api.txt
 
 COPY src/ src/
+# Baked in so the image is self-contained for Cloud Run (a few MB); compose.yaml mounts a fresh package over it
 COPY deploy/model/ deploy/model/
 
 # Not root: if the service were ever broken into, it couldn't change the image

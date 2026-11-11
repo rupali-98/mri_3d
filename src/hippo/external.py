@@ -32,11 +32,13 @@ in MSD. The margins come from MSD only; no external labels place the box.
 
 Outputs in <run>/external/ (<run>/external_largest/ with --largest-piece;
 <run>/external_recentred[_largest]/ with --recentre; <run>/external_msd_crop[_largest]/ with --msd-crop):
-    metrics_external.csv   one row per hemisphere: Dice, NSD (whole hippocampus), volumes
+    metrics_external.csv   one row per hemisphere: Dice, NSD, HD95 (whole hippocampus), volumes
                            (--largest-piece adds pieces = pieces before, removed_ml = volume removed;
                            --recentre and --msd-crop add recentred and moved_mm, moved_x/y/z_mm = how far the
                            box centre moved from the atlas box; --msd-crop adds crop_x/y/z_mm = box size)
-    summary_external.json  mean, median, std, and how the boxes were placed
+    summary_external.json  mean, median, std, volume agreement (absolute and relative error, ICC,
+                           Bland-Altman bias and limits) and how the boxes were placed; also added to the
+                           run's MLflow run as <folder>.<metric>, tagged with the post-processing and box
   crops in data/external_recentred/{first_pass,recentred}/ or data/external_msd_crop/{first_pass,msd_crop}/
 
 Usage:
@@ -57,12 +59,11 @@ import numpy as np
 import torch
 import yaml
 from monai.data import DataLoader, Dataset
-from monai.metrics import compute_dice, compute_surface_dice
-from monai.networks.utils import one_hot
 from scipy import ndimage
 
-from . import defaults
+from . import defaults, tracking
 from .data import eval_transforms
+from .metrics import summarise, whole_metrics
 from .model import build_model
 from .train import spacing_from_affine
 
@@ -160,19 +161,6 @@ def prepare(src: str, out: str = OUT_DIR, subjects: list[str] | None = None, ima
     print(f"Cropped {len(cases)} hippocampi into {out}; lowest label coverage "
           f"{min(c['coverage'] for c in cases):.3f} ({min(cases, key=lambda c: c['coverage'])['case']})")
     return cases
-
-
-def whole_metrics(pred: torch.Tensor, label: torch.Tensor, spacing_mm, nsd_tolerance_mm: float) -> dict:
-    """Dice, NSD and volumes of the whole hippocampus (any label > 0) for one case."""
-    p, y = one_hot((pred > 0).long(), num_classes=2, dim=1), one_hot((label > 0).long(), num_classes=2, dim=1)
-    voxel_ml = float(np.prod(spacing_mm)) / 1000
-    return {
-        "dice": float(compute_dice(p, y, include_background=False, ignore_empty=False)[0, 0]),
-        "nsd": float(compute_surface_dice(p, y, class_thresholds=[nsd_tolerance_mm], include_background=False,
-                                          spacing=list(map(float, spacing_mm)))[0, 0]),
-        "vol_pred_ml": float((pred > 0).sum()) * voxel_ml,
-        "vol_true_ml": float((label > 0).sum()) * voxel_ml,
-    }
 
 
 def largest_piece(pred: np.ndarray) -> tuple[np.ndarray, int]:
@@ -304,10 +292,14 @@ def evaluate(run_dir: str, cases: list[dict], out_dir: str | None = None, keep_l
     summary = {"n_cases": len(rows), "metric": "whole hippocampus (prediction > 0 vs any subfield label)",
                "post_processing": "largest piece only" if keep_largest else "none",
                "box": box}
-    for k in ("dice", "nsd"):
-        vals = np.array([r[k] for r in rows])
-        summary[k] = {"mean": float(vals.mean()), "median": float(np.median(vals)), "std": float(vals.std())}
+    for k in ("dice", "nsd", "hd95"):
+        vals = np.array([r[k] for r in rows])  # HD95 is nan where a prediction is empty
+        summary[k] = {"mean": float(np.nanmean(vals)), "median": float(np.nanmedian(vals)),
+                      "std": float(np.nanstd(vals))}
+    summary["volume"] = {k: v for k, v in summarise(rows).items() if k not in ("dice", "nsd", "hd95")}
     (out / "summary_external.json").write_text(json.dumps(summary, indent=2))
+    tracking.log_results(run, tracking.result_name(run, out), {**summarise(rows)},
+                         {"largest_piece": keep_largest, "box": box, "labels": "whole hippocampus"})
     print(json.dumps(summary, indent=2))
     return summary
 

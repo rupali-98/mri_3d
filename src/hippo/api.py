@@ -4,7 +4,8 @@ Serves a model package from hippo.package_model (default deploy/model/; the fold
 probabilities are averaged). Research use only, not for diagnosis: every response says so.
 
 Endpoints (interactive documentation at /docs):
-    GET  /health           liveness: is the model loaded
+    GET  /health           liveness: are the models loaded
+    GET  /models           the models this service holds (name to pass as ?model=, version, which is the default)
     GET  /model            name, version (hash of the weights), preprocessing, cross-validation results
     POST /segment/crop     one T1 crop around one hippocampus (NIfTI, 1 mm, at most 128 voxels per side)
     POST /segment/mni      a whole-brain T1 already registered to MNI space (NIfTI, 1 mm): both hippocampi
@@ -13,14 +14,25 @@ Endpoints (interactive documentation at /docs):
 Each result gives the anterior, posterior and whole volume (ml), quality checks (pieces, distance to
 the crop edge, missing part; for crops also the training volume range) and, with include_mask=true, the
 mask as a base64 gzipped NIfTI on the crop's grid (with its affine, so it lines up with the scan).
+largest=true (both endpoints, off by default) keeps only each mask's largest connected piece; the result
+then also gives the plain mask's checks (qc_before_post_processing) and the volume removed (removed_ml).
+The reported MSD results never use it.
+
+Several models: the package at HIPPO_MODEL_DIR is the default; packages in its versions/<name>/ folders
+(written by the cloud build, one per MLflow alias) are offered too. Every segment endpoint takes
+?model=<name> (default: the default model), and every response names the model that answered. The name
+of the default is HIPPO_DEFAULT_MODEL, else the file default_model in HIPPO_MODEL_DIR, else "default".
+A versions/ entry with the same weights as the default shares its loaded copy.
 Inputs the model was not made for are refused with HTTP 422: not a 3D NIfTI, voxel size not about 1 mm,
 a crop larger than 128 voxels, or an "MNI" scan that doesn't contain the atlas boxes. The API cannot
 check that a scan is really in MNI space, so /segment/mni always says so. Uploads are read from a
 temporary file that is deleted during the request; nothing is stored.
 
 Settings (environment variables):
-    HIPPO_MODEL_DIR   model package folder (default deploy/model)
+    HIPPO_MODEL_DIR   model package folder (default deploy/model), optionally with versions/<name>/ packages
+    HIPPO_DEFAULT_MODEL  name of the default model (see above)
     HIPPO_API_KEY     if set, every request except /health needs the header X-API-Key with this value
+    HIPPO_API_KEY_FILE  the same key read from a file (Docker Compose secret /run/secrets/api_key), if HIPPO_API_KEY is unset
     HIPPO_MAX_MB      largest upload accepted, in MB (default 30: Cloud Run takes at most 32 MiB per HTTP/1 request)
 
 Usage:
@@ -124,6 +136,23 @@ def describe(mask: np.ndarray, image: nib.Nifti1Image, limits: dict | None, incl
     return out
 
 
+def result_for(mask: np.ndarray, image: nib.Nifti1Image, limits: dict | None, include_mask: bool,
+               largest: bool) -> dict:
+    """describe(), optionally after keeping only the largest piece (post-processing, off by default).
+
+    With largest, the quality checks of the plain mask are kept too (qc_before_post_processing), so the
+    islands that were removed still show, with the volume they had (removed_ml).
+    """
+    plain = describe(mask, image, limits, include_mask and not largest)
+    if not largest:
+        return plain
+    kept, _ = largest_piece(mask)
+    voxel_ml = float(np.prod(image.header.get_zooms()[:3])) / 1000
+    removed_ml = float((mask > 0).sum() - (kept > 0).sum()) * voxel_ml
+    return {**describe(kept, image, limits, include_mask), "qc_before_post_processing": plain["qc"],
+            "removed_ml": round(removed_ml, 3)}
+
+
 async def read_nifti(upload: UploadFile, max_mb: float) -> tuple[str, nib.Nifti1Image]:
     """Save the upload to a temporary file (the caller deletes it) and open it as NIfTI, or refuse it."""
     data = await upload.read()
@@ -159,31 +188,74 @@ def segment_box(model: Model, image: nib.Nifti1Image, data: np.ndarray, box: dic
         os.unlink(path)
 
 
+def load_models(folder: Path) -> tuple[dict[str, Model], str]:
+    """The packages in a model folder by name, and the default's name (see the module docstring)."""
+    folder = Path(folder)
+    models = {sub.parent.name: Model(sub.parent) for sub in sorted((folder / "versions").glob("*/metadata.json"))}
+    named = os.environ.get("HIPPO_DEFAULT_MODEL")
+    if not named and (folder / "default_model").exists():
+        named = (folder / "default_model").read_text().strip()
+    if models and named and named not in models:  # with versions/, the default must be one of them
+        raise SystemExit(f"No model package called {named!r} in {folder}/versions (found: {sorted(models)})")
+    if (folder / "metadata.json").exists():
+        default = named or "default"
+        version = json.loads((folder / "metadata.json").read_text())["version"]
+        if default not in models or models[default].meta["version"] != version:  # else: one copy for both
+            models[default] = Model(folder)
+    else:
+        default = named or next(iter(models), None)
+    if default not in models:
+        raise SystemExit(f"No model package called {default!r} in {folder} (found: {sorted(models) or 'none'})")
+    return models, default
+
+
+def env_api_key() -> str | None:
+    """The API key from HIPPO_API_KEY, else from the file HIPPO_API_KEY_FILE names, else None."""
+    if os.environ.get("HIPPO_API_KEY"):
+        return os.environ["HIPPO_API_KEY"]
+    path = os.environ.get("HIPPO_API_KEY_FILE")
+    if not path:
+        return None
+    # A file keeps the key out of `docker inspect` and process listings, where environment variables show
+    return Path(path).read_text().strip() or None
+
+
 def create_app(model_dir: str | None = None, api_key: str | None = None, max_mb: float | None = None) -> FastAPI:
     """The FastAPI app; the arguments override the environment variables (the tests use them)."""
     model_dir = Path(model_dir or os.environ.get("HIPPO_MODEL_DIR", "deploy/model"))
-    api_key = api_key if api_key is not None else os.environ.get("HIPPO_API_KEY")
+    api_key = api_key if api_key is not None else env_api_key()
     max_mb = max_mb or float(os.environ.get("HIPPO_MAX_MB", 30))
     state = {}
 
     @asynccontextmanager
     async def lifespan(app):
-        state["model"] = Model(model_dir)  # once, not per request
-        log.info("loaded %s version %s", state["model"].meta["name"], state["model"].meta["version"])
+        state["models"], state["default"] = load_models(model_dir)  # once, not per request
+        for key, m in state["models"].items():
+            log.info("loaded %s: %s version %s%s", key, m.meta["name"], m.meta["version"],
+                     " (default)" if key == state["default"] else "")
         yield
 
     app = FastAPI(title="Hippocampus segmentation API", lifespan=lifespan,
                   description="3D U-Net for anterior/posterior hippocampus segmentation and volumetry on T1 MRI "
-                              "(GET /model says which trained models it serves). **Research use only, not for "
-                              "diagnosis.**")
+                              "(GET /models lists the models it serves; choose one with ?model=). **Research use "
+                              "only, not for diagnosis.**")
 
     def authorise(x_api_key: str | None = Header(default=None)):
         if api_key and x_api_key != api_key:
             raise HTTPException(401, "missing or wrong X-API-Key")
 
-    def header(model: Model) -> dict:
-        return {"model": {"name": model.meta["name"], "version": model.meta["version"]},
+    def pick(name: str | None) -> tuple[str, Model]:
+        """The requested model (the default without a name), or 404 listing the available ones."""
+        key = name or state["default"]
+        if key not in state["models"]:
+            raise HTTPException(404, f"no model called {key!r}; available: {sorted(state['models'])} (GET /models)")
+        return key, state["models"][key]
+
+    def header(key: str, model: Model) -> dict:
+        return {"model": {"key": key, "name": model.meta["name"], "version": model.meta["version"]},
                 "intended_use": model.meta["intended_use"]}
+
+    choose = Query(None, description="Which model to use (a name from GET /models); default: the default model")
 
     @app.get("/", include_in_schema=False)
     def root():
@@ -191,41 +263,56 @@ def create_app(model_dir: str | None = None, api_key: str | None = None, max_mb:
 
     @app.get("/health")
     def health():
-        return {"status": "ok" if "model" in state else "loading"}
+        return {"status": "ok" if "models" in state else "loading"}
+
+    @app.get("/models", dependencies=[Depends(authorise)])
+    def models_list():
+        return {"default": state["default"],
+                "models": [{"key": key, "name": m.meta["name"], "version": m.meta["version"],
+                            "combination": m.meta["combination"], "experiment": m.meta.get("experiment"),
+                            "default": key == state["default"], "mni": "mni_boxes" in m.meta}
+                           for key, m in state["models"].items()]}
 
     @app.get("/model", dependencies=[Depends(authorise)])
-    def model_info():
-        meta = state["model"].meta
+    def model_info(model: str | None = choose):
+        key, chosen = pick(model)
+        meta = chosen.meta
         keys = ("name", "version", "experiment", "created", "members", "combination", "normalize", "labels",
                 "input", "cross_validation", "intended_use")
-        return {k: meta[k] for k in keys} | {"endpoints": {"crop": True, "mni": "mni_boxes" in meta}}
+        return {"key": key} | {k: meta[k] for k in keys} | {"endpoints": {"crop": True, "mni": "mni_boxes" in meta}}
 
     @app.post("/segment/crop", dependencies=[Depends(authorise)])
     async def segment_crop(file: UploadFile = File(..., description="T1 crop around one hippocampus, NIfTI"),
-                           include_mask: bool = Query(False, description="Return the mask as base64 NIfTI")):
-        model, started, request = state["model"], time.time(), uuid.uuid4().hex[:8]
+                           include_mask: bool = Query(False, description="Return the mask as base64 NIfTI"),
+                           largest: bool = Query(False, description="Keep only the mask's largest piece "
+                                                                    "(post-processing; off by default and in the "
+                                                                    "reported MSD results)"),
+                           model: str | None = choose):
+        (key, chosen), started, request = pick(model), time.time(), uuid.uuid4().hex[:8]
         path, image = await read_nifti(file, max_mb)
         try:
             if problems := check_image(image, crop=True):
                 raise HTTPException(422, problems)
             # the model is CPU work: run it in a worker thread so the server keeps answering (e.g. /health)
-            mask = await run_in_threadpool(model.segment, path, image)
+            mask = await run_in_threadpool(chosen.segment, path, image)
         finally:
             os.unlink(path)
-        result = describe(mask, image, model.meta["training_label_range"], include_mask)
-        log.info("request %s crop %s %.2fs flags=%s", request, list(image.shape), time.time() - started,
+        result = result_for(mask, image, chosen.meta["training_label_range"], include_mask, largest)
+        log.info("request %s crop %s model %s %.2fs flags=%s", request, list(image.shape), key, time.time() - started,
                  result["qc"]["flags"])
-        return header(model) | {"request_id": request, "input": {"shape": list(image.shape)},
-                                "post_processing": "none", "hippocampi": [{"side": "unknown (crop)", **result}],
+        return header(key, chosen) | {"request_id": request, "input": {"shape": list(image.shape)},
+                                "post_processing": "largest piece" if largest else "none",
+                                "hippocampi": [{"side": "unknown (crop)", **result}],
                                 "seconds": round(time.time() - started, 2)}
 
     @app.post("/segment/mni", dependencies=[Depends(authorise)])
     async def segment_mni(file: UploadFile = File(..., description="Whole-brain T1 in MNI space, NIfTI"),
                           include_mask: bool = Query(False, description="Return each mask as base64 NIfTI"),
                           largest: bool = Query(False, description="Keep only each mask's largest piece "
-                                                                   "(post-processing; off in the main results)")):
-        model, started, request = state["model"], time.time(), uuid.uuid4().hex[:8]
-        boxes = model.meta.get("mni_boxes")
+                                                                   "(post-processing; off in the main results)"),
+                          model: str | None = choose):
+        (key, chosen), started, request = pick(model), time.time(), uuid.uuid4().hex[:8]
+        boxes = chosen.meta.get("mni_boxes")
         if not boxes:
             raise HTTPException(501, "this model package has no MNI boxes (package it with --src)")
         path, image = await read_nifti(file, max_mb)
@@ -237,20 +324,12 @@ def create_app(model_dir: str | None = None, api_key: str | None = None, max_mb:
             os.unlink(path)
         hippocampi = []
         for side, box in boxes.items():
-            mask, crop = await run_in_threadpool(segment_box, model, image, data, box, side)
-            # quality flags on the plain mask; the training volume range is MSD's, not MNI space, so not used
-            plain = describe(mask, crop, None, include_mask and not largest)
-            if largest:
-                kept, _ = largest_piece(mask)
-                voxel_ml = float(np.prod(crop.header.get_zooms()[:3])) / 1000
-                removed_ml = float((mask > 0).sum() - (kept > 0).sum()) * voxel_ml
-                result = {**describe(kept, crop, None, include_mask), "qc_before_post_processing": plain["qc"],
-                          "removed_ml": round(removed_ml, 3)}
-            else:
-                result = plain
+            mask, crop = await run_in_threadpool(segment_box, chosen, image, data, box, side)
+            # the training volume range is MSD's, not MNI space, so it isn't checked here
+            result = result_for(mask, crop, None, include_mask, largest)
             hippocampi.append({"side": "left" if side == "L" else "right", **result})
-        log.info("request %s mni %s %.2fs", request, list(image.shape), time.time() - started)
-        return header(model) | {"request_id": request, "input": {"shape": list(image.shape)},
+        log.info("request %s mni %s model %s %.2fs", request, list(image.shape), key, time.time() - started)
+        return header(key, chosen) | {"request_id": request, "input": {"shape": list(image.shape)},
                                 "post_processing": "largest piece" if largest else "none",
                                 "warnings": [NOT_MNI_CHECKED], "hippocampi": hippocampi,
                                 "seconds": round(time.time() - started, 2)}

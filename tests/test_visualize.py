@@ -78,3 +78,17 @@ def test_visualize_html(tmp_path):
     visualize.main(str(image), str(label), out=str(tmp_path / "case.png"), html=True)
     page = (tmp_path / "case_3d.html").read_text(encoding="utf-8")
     assert "ground truth: anterior" in page and "ground truth: posterior" in page
+
+
+def test_average_of_one_model_is_that_model(tmp_path):
+    task = make_fake_msd(tmp_path / "data", n=1)
+    run = tmp_path / "run"
+    run.mkdir()
+    cfg = yaml.safe_load(open("configs/baseline.yaml"))
+    cfg["model"]["channels"] = [8, 16, 32, 64]
+    (run / "config.yaml").write_text(yaml.safe_dump(cfg))
+    torch.save(build_model(cfg).state_dict(), run / "best.pt")
+    image = visualize.load(task / "imagesTr" / "hippocampus_000.nii.gz", None)["image"]
+    single = visualize.predict(run, image)
+    assert np.array_equal(visualize.predict_average([run, run], image), single)
+    assert visualize.probabilities(run, image).sum(0).allclose(torch.ones(single.shape))

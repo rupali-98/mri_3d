@@ -1,0 +1,11 @@
+# The cloud upload page only (webapp/Dockerfile, streamlit_dashboard/upload_page.py): no PyTorch or MONAI,
+# because the page sends scans to the API (hippo.api) instead of running the model. Same versions as the venv.
+streamlit==1.66.1
+numpy==2.4.6
+nibabel==5.4.2
+matplotlib==3.11.2                      # colour names in hippo.slices
+pillow==13.0.0                          # draws the slice images
+scikit-image==0.26.0                    # 3D surfaces (marching cubes)
+plotly==7.1.0                           # 3D view
+requests==2.34.2                        # calls the API
+google-cloud-storage==3.17.1            # example scans from the bucket (hippo.examples); same as requirements.txt

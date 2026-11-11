@@ -1,0 +1,53 @@
+# Google Cloud Build: one API image holding several registered models, for trying versions side by side.
+# Each entry of _MODELS (name=uri=weights_version, joined by ";", from hippo.register_model --build-list) is
+# fetched from MLflow's artifact store into deploy/model/versions/<name>/; the first is also the default
+# (copied to deploy/model/ and named in deploy/model/default_model). hippo.api serves the others as
+# ?model=<name> and lists them at GET /models. deploy/cloudbuild.yaml (one model) is unchanged.
+# From the project root (docs/deployment.md, "Several models in one service"):
+#     MODELS=$(python -m hippo.register_model --build-list champion random_trim ensemble)
+#     gcloud builds submit --config deploy/cloudbuild-models.yaml \
+#         --substitutions "_MODELS=$MODELS,_IMAGE=europe-west1-docker.pkg.dev/PROJECT_ID/hippo/api:TAG" .
+steps:
+  - id: fetch-models
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        mkdir -p deploy/model/versions
+        first=""
+        IFS=';' read -ra entries <<< "${_MODELS}"
+        for entry in "$${entries[@]}"; do
+          name="$${entry%%=*}"; rest="$${entry#*=}"; uri="$${rest%=*}"; weights="$${rest##*=}"
+          mkdir -p "deploy/model/versions/$$name"
+          gcloud storage cp --recursive "$$uri/*" "deploy/model/versions/$$name/"
+          echo "$$name $$weights $$uri" >> deploy/model/expected
+          if [ -z "$$first" ]; then
+            first="$$name"
+            cp -r "deploy/model/versions/$$name/." deploy/model/
+            echo "$$name" > deploy/model/default_model
+          fi
+        done
+        ls -R deploy/model | head -40
+  # The cloud-sdk image has no python3 (gcloud brings its own); this is the Dockerfile's base image
+  - id: check-versions
+    name: python:3.11.17-slim-trixie
+    entrypoint: python3
+    args:
+      - -c
+      - |
+        import json, os, sys
+        for line in open("deploy/model/expected").read().splitlines():
+            name, weights, uri = line.split(" ", 2)
+            found = json.load(open(f"deploy/model/versions/{name}/metadata.json"))["version"]
+            if found != weights:
+                sys.exit(f"{name}: the model at {uri} is version {found}, not {weights}: refusing to build")
+            print(f"{name}: version {found} from {uri}")
+        os.remove("deploy/model/expected")
+        print("default:", open("deploy/model/default_model").read().strip())
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "backend/Dockerfile", "-t", "${_IMAGE}", "."]
+images:
+  - "${_IMAGE}"

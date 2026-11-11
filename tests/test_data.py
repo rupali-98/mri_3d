@@ -1,10 +1,12 @@
 """data.normalize: zscore rescales each scan, none keeps raw intensities. data.random_trim: random sub-crop in training."""
+import json
+
 import nibabel as nib
 import numpy as np
 import pytest
 import torch
 
-from hippo.data import RandomTrimd, eval_transforms, make_loaders, train_transforms
+from hippo.data import RandomTrimd, eval_transforms, fold_file, make_folds, make_loaders, make_splits, train_transforms
 
 from synthetic import make_fake_msd
 
@@ -71,3 +73,19 @@ def test_random_trim_batches_of_different_sizes_load(tmp_path):
     batch = next(iter(train_loader))
     assert batch["image"].shape[-1] % 8 == 0                     # padded after the trim, so the U-Net can divide it
     assert batch["image"].shape[-1] < 32 + 8
+
+
+def test_folds_cover_train_and_val_once_and_keep_test(tmp_path):
+    task = make_fake_msd(tmp_path / "data", n=12)
+    split_file = tmp_path / "data" / "splits.json"
+    splits = make_splits(task, split_file, 0.25, 0.25, seed=1)
+    folds = make_folds(split_file, 3, seed=1)
+    pool = sorted(c["image"] for c in splits["train"] + splits["val"])
+    vals = [c["image"] for f in folds for c in f["val"]]
+    assert sorted(vals) == pool                                  # every non-test case validates exactly once
+    for i, f in enumerate(folds):
+        assert not {c["image"] for c in f["train"]} & {c["image"] for c in f["val"]}
+        assert sorted(c["image"] for c in f["train"] + f["val"]) == pool
+        assert f["test"] == splits["test"]                       # the test split is the same in every fold
+        assert json.loads(fold_file(tmp_path / "data", i).read_text()) == f
+    assert make_folds(split_file, 3, seed=1) == folds            # fixed: the same folds every time

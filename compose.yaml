@@ -1,0 +1,115 @@
+# The whole project as services (docs/docker.md). Research use only, not for diagnosis.
+#
+#     mkdir -p secrets && openssl rand -hex 32 > secrets/api_key.txt     # once
+#     docker compose up --build              # frontend, backend, mlflow (CPU; works on macOS)
+#     docker compose up --watch              # same, code changes sync into the containers
+#     docker compose --profile gpu run --rm model-service python -m hippo.train --config configs/baseline.yaml
+#
+#   frontend       Streamlit viewer   http://localhost:8501   reads data/, predicts with runs/
+#   backend        FastAPI + model    http://localhost:8080   serves deploy/model/, needs the X-API-Key header
+#   mlflow         experiment UI      http://localhost:5001   reads runs/mlflow.db (official image, like a database)
+#   model-service  training/eval      NVIDIA GPU; profile "gpu" only, so `up` works on a machine without one
+#
+# data/ and runs/ are bind mounts, not copied into any image: scans stay on the host, and every service
+# sees the same files the native venv uses. Ports and the torch build come from .env.
+
+x-health: &health
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 30s  # the model or Streamlit takes a few seconds to load
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: hippo-frontend:local
+    ports:
+      - "${FRONTEND_PORT:-8501}:8501"
+    volumes:
+      - ./data:/app/data:ro
+      - ./runs:/app/runs  # read-write: the page saves its predictions to runs/figures/notebook/
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+    develop:
+      watch:
+        - action: sync  # Streamlit reruns the page itself (runOnSave)
+          path: ./streamlit_dashboard
+          target: /app/streamlit_dashboard
+        - action: sync+restart
+          path: ./src/hippo
+          target: /app/src/hippo
+        - action: rebuild
+          path: ./requirements-dashboard.txt
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: hippo-backend:local
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    environment:
+      HIPPO_API_KEY_FILE: /run/secrets/api_key
+      HIPPO_MAX_MB: ${HIPPO_MAX_MB:-30}
+    secrets:
+      - api_key
+    volumes:
+      # A newly packaged model (hippo.package_model) is used after a restart, without rebuilding the image
+      - ./deploy/model:/app/deploy/model:ro
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./src/hippo
+          target: /app/src/hippo
+        - action: rebuild
+          path: ./requirements-api.txt
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.17.1  # same version as requirements.txt, so it reads the schema training wrote
+    command: ["mlflow", "server", "--backend-store-uri", "sqlite:////workspace/runs/mlflow.db",
+              "--host", "0.0.0.0", "--port", "5000"]
+    ports:
+      - "${MLFLOW_PORT:-5001}:5000"  # 5001 on the host: macOS AirPlay uses 5000
+    volumes:
+      - ./runs:/workspace/runs
+    healthcheck:
+      <<: *health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+
+  model-service:
+    profiles: ["gpu"]
+    build:
+      context: .
+      dockerfile: model-service/Dockerfile
+      args:
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}
+    image: hippo-model-service:local
+    volumes:
+      - .:/workspace
+      - claude-config:/home/dev/.claude  # keeps the Claude Code login and settings across rebuilds
+    environment:
+      - ANTHROPIC_API_KEY  # optional: passed through from the host shell if set
+    # Only this service gets the GPU; the viewer, API and MLflow don't need one
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    shm_size: "2gb"  # PyTorch DataLoader workers need more shared memory than the default
+    stdin_open: true
+    tty: true
+
+secrets:
+  api_key:
+    file: ./secrets/api_key.txt  # git-ignored; create it as shown at the top
+
+volumes:
+  claude-config:

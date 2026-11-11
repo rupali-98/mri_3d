@@ -1,0 +1,8 @@
+# Build context for frontend/Dockerfile only: the code it copies, never data/ or runs/ (mounted instead).
+*
+!requirements-dashboard.txt
+!src/hippo/
+!configs/
+!streamlit_dashboard/
+**/__pycache__/
+**/*.pyc
