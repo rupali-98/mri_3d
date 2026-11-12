@@ -12,8 +12,9 @@ never see it. Nothing is stored.
 
 Visitors without a scan can pick an example instead (hippo.examples: two MSD crops and the left and right
 crops of one MNI-HISUB25 subject, read from the bucket). Examples come with their manual labels, so the page
-also scores each model against them (Dice); an uploaded scan has no ground truth, so there Dice is only
-agreement between models.
+also scores each model against them (Dice) and draws the label as its own row of slices (and in the 3D view)
+above the predictions, with the same plane sliders; MNI-HISUB25 labels are subfields and keep their own
+colours. An uploaded scan has no ground truth, so there Dice is only agreement between models.
 
 Unlike the research page (compare_slices.py), it needs no data/, runs/ or PyTorch. Research use only, not for
 diagnosis.
@@ -39,22 +40,30 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from hippo import api_client, examples
-from hippo.slices import VIEWS, Scan, label_colours, mm_per_px, rgb_colours, surfaces
+from hippo.slices import VIEWS, Scan, legend_html, mm_per_px, surfaces
 
 CROP, MNI = "Hippocampus crop", "Whole brain in MNI space"
 MAX_MB = 30  # the API's limit (Cloud Run takes at most 32 MiB per request)
-COLOURS = rgb_colours(label_colours({1, 2}))  # anterior orangered, posterior steelblue
 LIGHT = dict(ambient=0.45, diffuse=0.8, specular=0.25, roughness=0.6)
+
+
+def drawable(scan: nib.Nifti1Image, mask: nib.Nifti1Image) -> Scan:
+    """A scan and a mask on the same grid as a Scan the slice views can draw (colours follow the mask's labels)."""
+    with tempfile.TemporaryDirectory() as folder:  # Scan reads files; they are gone after this
+        nib.save(scan, Path(folder) / "scan.nii.gz")
+        nib.save(mask, Path(folder) / "mask.nii.gz")
+        return Scan(str(Path(folder) / "scan.nii.gz"), str(Path(folder) / "mask.nii.gz"))
 
 
 def scan_for(hippocampus: dict, upload: bytes) -> Scan:
     """The uploaded scan under this hippocampus's mask, as a Scan the slice views can draw."""
     mask = api_client.mask_image(hippocampus)
-    region = api_client.scan_region(api_client.read_scan(upload), mask)
-    with tempfile.TemporaryDirectory() as folder:  # Scan reads files; they are gone after this
-        nib.save(region, Path(folder) / "scan.nii.gz")
-        nib.save(mask, Path(folder) / "mask.nii.gz")
-        return Scan(str(Path(folder) / "scan.nii.gz"), str(Path(folder) / "mask.nii.gz"))
+    return drawable(api_client.scan_region(api_client.read_scan(upload), mask), mask)
+
+
+def truth_for(upload: bytes, label: bytes) -> Scan:
+    """An example crop with its manual label: anterior/posterior for MSD, three subfields for MNI-HISUB25."""
+    return drawable(api_client.read_scan(upload), api_client.read_scan(label))
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -81,10 +90,10 @@ def model_label(m: dict) -> str:
 
 
 def figure_3d(scan: Scan) -> go.Figure:
-    """Rotatable surfaces of the anterior and posterior parts, in world mm."""
+    """Rotatable surfaces of each labelled part (anterior/posterior, or a label's subfields), in world mm."""
     traces = [go.Mesh3d(x=v[:, 0], y=v[:, 1], z=v[:, 2], i=f[:, 0], j=f[:, 1], k=f[:, 2], color=c, name=name,
                         showlegend=True, lighting=LIGHT, hovertemplate=f"<b>{name}</b><extra></extra>")
-              for name, c, v, f in surfaces(scan.labels, scan.spacing, scan.origin, COLOURS)]
+              for name, c, v, f in surfaces(scan.labels, scan.spacing, scan.origin, scan.colours)]
     fig = go.Figure(traces)
     fig.update_layout(height=420, margin=dict(l=0, r=0, t=0, b=0), legend=dict(orientation="h", y=0),
                       scene=dict(aspectmode="data", xaxis_title="x: L → R (mm)", yaxis_title="y: P → A (mm)",
@@ -240,16 +249,32 @@ with st.sidebar:
     st.header("Display")
     opacity = st.slider("Mask opacity", 0.0, 1.0, 0.5, 0.05)
     size = st.slider("Size (px)", 160, 480, 240 if len(order) > 1 else 280, 20)
+    show_truth = bool(shown.get("label")) and st.toggle(
+        "Show the manual label", value=True,
+        help="The example's ground truth, drawn above the models' predictions with the same plane sliders")
     st.header("Planes")
     base = scans[order[0]]  # every model's mask is on the same grid, so one set of sliders moves all rows
     pos = list(base.start)
     for view_name, axis, _, _ in VIEWS:
         pos[axis] = st.slider(view_name, 0, base.data.shape[axis] - 1, base.start[axis], key=f"pos{axis}::{side}")
 
+truth = None
+if show_truth:  # examples are crops, so the label lies on the same grid as the predictions
+    if ("truth", side) not in shown["scans"]:
+        shown["scans"][("truth", side)] = truth_for(shown["scan"], shown["label"])
+    truth = shown["scans"][("truth", side)]
+
 scale = mm_per_px(base.data.shape, base.spacing, size)
+if truth is not None:
+    truth_ml = float((truth.labels > 0).sum()) * float(truth.spacing.prod()) / 1000
+    st.markdown(f"**Manual label (ground truth)** · whole {truth_ml:.2f} ml · " + legend_html(truth.colours),
+                unsafe_allow_html=True)
+    for col, view in zip(st.columns(3), VIEWS):
+        col.image(truth.render(view, pos, opacity=opacity, scale=scale), caption=view[0],
+                  alt=f"{view[0]} slice of {shown['example']} with its manual label")
 for k in order:
     h = picked[k]
-    if len(order) > 1:
+    if len(order) > 1 or truth is not None:
         st.markdown(f"**{k}** · {results[k]['model']['name']} · whole {h['volumes_ml']['whole']:.2f} ml"
                     + (f" · :orange[needs review: {'; '.join(h['qc']['flags'])}]" if h["qc"]["needs_review"] else ""))
     for col, view in zip(st.columns(3), VIEWS):
@@ -258,15 +283,20 @@ for k in order:
     st.download_button(f"Download the {k} mask (.nii.gz)", api_client.mask_bytes(h),
                        file_name=f"{stem}_{side.split()[0]}_{k}_mask.nii.gz", mime="application/gzip",
                        icon=":material/download:", key=f"download::{k}::{side}")
-st.caption("Orange = anterior, blue = posterior. Radiological orientation, as in 3D Slicer: the patient's right "
-           "is on the screen's left in the axial and coronal views. " + base.describe(pos))
+subfields = truth is not None and not shown.get("parts", True)
+st.caption("Orange = anterior, blue = posterior. "
+           + ("The manual label is in subfields (gold = CA1-3, green = subiculum, orchid = CA4-DG; names inferred "
+              "from the atlas), so compare its outline, not its colours, with the predictions. " if subfields else "")
+           + "Radiological orientation, as in 3D Slicer: the patient's right is on the screen's left in the axial and "
+             "coronal views. " + base.describe(pos))
 
 if st.toggle("3D view"):
-    for start in range(0, len(order), 3):
-        for col, k in zip(st.columns(3), order[start:start + 3]):
+    panels = ([("Manual label", truth)] if truth is not None else []) + [(k, scans[k]) for k in order]
+    for start in range(0, len(panels), 3):
+        for col, (title, scan) in zip(st.columns(3), panels[start:start + 3]):
             with col:
-                st.markdown(f"**{k}**")
-                st.plotly_chart(figure_3d(scans[k]), key=f"3d::{k}::{side}",
-                                alt=f"Rotatable 3D surfaces of the hippocampus predicted by {k}")
+                st.markdown(f"**{title}**")
+                st.plotly_chart(figure_3d(scan), key=f"3d::{title}::{side}",
+                                alt=f"Rotatable 3D surfaces of the hippocampus: {title}")
 
 st.caption("Research use only, not for diagnosis.")

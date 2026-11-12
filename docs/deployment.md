@@ -302,8 +302,10 @@ gcloud run services describe hippo-web --region europe-west1 --format 'value(sta
 
 ### Example scans (for visitors without a file)
 
-The sidebar's **Example scan** box offers four crops with their manual labels (`hippo.examples`), and the page
-scores each model against the label (Dice). They live in the bucket, so they can change without a rebuild:
+The sidebar's **Example scan** box offers four crops with their manual labels (`hippo.examples`). The page
+scores each model against the label (Dice) and draws the label as its own row of slices above the predictions,
+with the same plane sliders, and in the 3D view ("Show the manual label" in the sidebar; MNI-HISUB25 labels keep
+their subfield colours). They live in the bucket, so they can change without a rebuild:
 
 | Example | Data | Why | 3D U-Net Dice (champion) |
 |---|---|---|---|

@@ -151,6 +151,37 @@ def test_example_scan_is_offered_and_scored(tmp_path, monkeypatch):
     assert list(scored.columns) == ["Model", "Dice, whole", "Dice, anterior", "Dice, posterior"]  # MSD: parts too
     assert 0 <= scored["Dice, whole"][0] <= 1
 
+    # the manual label is drawn as its own row above the prediction, and in the 3D view
+    assert len(at.get("image")) == 6                                         # 3 views x (label + model)
+    assert any("Manual label (ground truth)" in m.value for m in at.markdown)
+    next(t for t in at.toggle if t.label == "3D view").set_value(True).run()
+    assert not at.exception and len(at.get("plotly_chart")) == 2
+    next(t for t in at.toggle if t.label == "Show the manual label").set_value(False).run()
+    assert not at.exception and len(at.get("image")) == 3
+
+
+def test_subfield_label_keeps_its_own_colours(tmp_path, monkeypatch):
+    """An external example's label has subfields 1-3: drawn in their colours, and the caption says so."""
+    import gzip
+    import nibabel as nib
+    import numpy as np
+    shown = _result(tmp_path, "crop")
+    scan = api_client.read_scan(shown["scan"])
+    label = np.zeros(scan.shape, np.uint8)
+    label[10:14, 12:20, 10:14], label[14:18, 12:20, 10:14], label[18:22, 12:20, 10:14] = 1, 2, 3
+    shown |= {"label": gzip.compress(nib.Nifti1Image(label, scan.affine).to_bytes()), "parts": False,
+              "example": "MNI-HISUB25 s03, left (external)"}
+    monkeypatch.setenv("HIPPO_API_URL", "http://testserver")
+    at = AppTest.from_file(PAGE, default_timeout=30)
+    at.session_state["shown"] = shown
+    at.run()
+    assert not at.exception
+    header = next(m.value for m in at.markdown if "Manual label (ground truth)" in m.value)
+    assert "CA1-3" in header and "subiculum" in header                      # the subfield legend
+    assert any("label is in subfields" in c.value for c in at.caption)
+    scored = next(d.value for d in at.dataframe if "Dice, whole" in d.value.columns)
+    assert list(scored.columns) == ["Model", "Dice, whole"]                  # whole only for subfield labels
+
 
 def test_examples_unavailable_keeps_uploads(monkeypatch, tmp_path):
     monkeypatch.setenv("HIPPO_API_URL", "http://testserver")
