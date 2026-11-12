@@ -61,10 +61,9 @@ import yaml
 from monai.data import DataLoader, Dataset
 from scipy import ndimage
 
-from . import defaults, tracking
+from . import defaults, ensemble, tracking
 from .data import eval_transforms
 from .metrics import summarise, whole_metrics
-from .model import build_model
 from .train import spacing_from_affine
 
 OUT_DIR = "data/external"
@@ -179,9 +178,7 @@ def predictions(run_dir: str, cases: list[dict]):
     run = Path(run_dir)
     cfg = yaml.safe_load((run / "config.yaml").read_text())
     device = defaults.pick_device()
-    model = build_model(cfg).to(device)
-    model.load_state_dict(torch.load(run / "best.pt", map_location=device, weights_only=True))
-    model.eval()
+    model = ensemble.load(run, device)  # one model, or the folds' averaged probabilities (hippo.ensemble)
     transforms = eval_transforms(cfg["data"].get("normalize", "zscore"))  # the run's own preprocessing
     loader = DataLoader(Dataset([{"image": c["image"], "label": c["label"]} for c in cases], transforms), batch_size=1)
     for case, batch in zip(cases, loader):
@@ -307,7 +304,7 @@ def evaluate(run_dir: str, cases: list[dict], out_dir: str | None = None, keep_l
 if __name__ == "__main__":
     p = defaults.make_parser("Evaluate a trained model on external whole-brain MNI data.")
     p.add_argument("--src", required=True, help="External dataset folder (s01/, s02/, ..., SPAM_*_MNI.nii.gz)")
-    p.add_argument("--run", default=defaults.RUN_DIR, help="Run folder with best.pt + config.yaml")
+    p.add_argument("--run", default=defaults.RUN_DIR, help="Run folder with best.pt + config.yaml, or an ensemble folder (hippo.ensemble)")
     p.add_argument("--subjects", nargs="+", help="Only these subjects, e.g. s03 (default: all)")
     p.add_argument("--out", default=OUT_DIR, help="Folder for the cropped cases")
     p.add_argument("--largest-piece", action="store_true",

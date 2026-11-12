@@ -30,9 +30,77 @@ The two parts score about the same: anterior Dice 0.880 / NSD 0.931, posterior 0
 - **Figures:** each dot is one case and the bar is the mean. The dark orange triangles are the external hippocampi after keeping the largest piece.
 - **Main result has no shift or post-processing.** Largest-piece post-processing is applied to the **external dataset only**; all MSD rows use the plain prediction. Keeping the largest piece removes stray islands and improves all 50 external hippocampi (Dice 0.811 → 0.840, NSD 0.777 → 0.825), but that step was chosen after looking at the external errors, so it is a secondary result.
 
-## Cross-validation (pending)
+## Cross-validation
 
-Five fold models per experiment, each scored on the fixed MSD test split and the external data, with Dice, HD95, NSD, absolute and relative volume error and ICC per label, and a Bland–Altman plot. Made by `scripts/run_cv.sh` and `python -m hippo.results`; not trained yet. The tables will go here.
+Five fold models per experiment (5 folds over the 221 train + validation cases, split by file), each scored on the same fixed MSD test split (39) and the external data (50). Mean ± SD over the fold models. Made by `scripts/run_cv.sh` and `python -m hippo.results`; Bland–Altman plots in `runs/<experiment>/results/bland_altman.png`.
+
+**3D U-Net:**
+
+| Test set | Post-processing | Label | Dice | NSD (1 mm) | Abs. volume error (ml) | Rel. volume error (%) | ICC |
+|---|---|---|---:|---:|---:|---:|---:|
+| MSD test | none | anterior | 0.877 ± 0.002 | 0.925 ± 0.003 | 0.124 ± 0.003 | 7.6 ± 0.2 | 0.802 ± 0.012 |
+| MSD test | none | posterior | 0.866 ± 0.002 | 0.938 ± 0.001 | 0.123 ± 0.003 | 8.8 ± 0.3 | 0.733 ± 0.014 |
+| MSD test | none | whole | 0.897 ± 0.001 | 0.958 ± 0.001 | 0.172 ± 0.009 | 5.6 ± 0.3 | 0.845 ± 0.017 |
+| MNI-HISUB25, atlas box | none | whole | 0.831 ± 0.016 | 0.813 ± 0.025 | 0.457 ± 0.129 | 10.2 ± 2.8 | 0.360 ± 0.105 |
+| MNI-HISUB25, atlas box | largest piece | whole | 0.853 ± 0.004 | 0.850 ± 0.006 | 0.264 ± 0.046 | 5.8 ± 1.0 | 0.625 ± 0.090 |
+| MNI-HISUB25, MSD-style box | largest piece | whole | 0.858 ± 0.003 | 0.859 ± 0.004 | 0.187 ± 0.023 | 4.0 ± 0.5 | 0.726 ± 0.056 |
+
+**Random position (`configs/random_trim.yaml`):**
+
+| Test set | Post-processing | Label | Dice | NSD (1 mm) | Abs. volume error (ml) | Rel. volume error (%) | ICC |
+|---|---|---|---:|---:|---:|---:|---:|
+| MSD test | none | anterior | 0.874 ± 0.001 | 0.921 ± 0.003 | 0.146 ± 0.006 | 9.0 ± 0.4 | 0.774 ± 0.018 |
+| MSD test | none | posterior | 0.864 ± 0.002 | 0.938 ± 0.002 | 0.132 ± 0.007 | 9.4 ± 0.6 | 0.706 ± 0.028 |
+| MSD test | none | whole | 0.896 ± 0.001 | 0.955 ± 0.002 | 0.201 ± 0.022 | 6.6 ± 0.7 | 0.792 ± 0.038 |
+| MNI-HISUB25, atlas box | none | whole | 0.826 ± 0.011 | 0.803 ± 0.016 | 0.454 ± 0.094 | 10.1 ± 2.1 | 0.343 ± 0.099 |
+| MNI-HISUB25, atlas box | largest piece | whole | 0.853 ± 0.001 | 0.849 ± 0.003 | 0.224 ± 0.031 | 4.9 ± 0.7 | 0.671 ± 0.067 |
+| MNI-HISUB25, MSD-style box | largest piece | whole | 0.859 ± 0.001 | 0.860 ± 0.003 | 0.167 ± 0.009 | 3.6 ± 0.2 | 0.774 ± 0.016 |
+
+- **In distribution the two are equal** (whole Dice 0.897 vs 0.896); the 3D U-Net's volumes agree slightly better (ICC 0.845 vs 0.792).
+- **Externally, with the largest piece kept, they are equal too** (0.853 both; MSD-style box 0.858 vs 0.859), but the random position folds vary less (SD 0.001 vs 0.004) and their volumes agree better (ICC 0.671 vs 0.625; 0.774 vs 0.726).
+- **Fold models vs the single run:** the folds score higher externally on the plain atlas box (0.831 ± 0.016 vs 0.811). The single run was trained on 70% of the files, each fold on 80%, and the fold-to-fold spread shows how much one external number varies by chance.
+- **Plain external predictions vary most** between folds (Dice SD 0.011–0.016, against 0.001–0.004 with the largest piece): stray islands far from the hippocampus, which the largest piece removes.
+
+### Ensembles: the five fold models averaged
+
+Each experiment's five fold models with their class probabilities averaged voxel by voxel into one prediction (`hippo.ensemble`), scored as one model, so there is no ± SD. The random position ensemble is the one the API serves as `ensemble` (MLflow version 4, weights a2d551dad98a); the 3D U-Net ensemble isn't registered yet.
+
+**3D U-Net, 5-fold ensemble:**
+
+| Test set | Post-processing | Label | Dice | NSD (1 mm) | Abs. volume error (ml) | Rel. volume error (%) | ICC |
+|---|---|---|---:|---:|---:|---:|---:|
+| MSD test | none | anterior | 0.880 | 0.927 | 0.120 | 7.3 | 0.814 |
+| MSD test | none | posterior | 0.869 | 0.940 | 0.122 | 8.8 | 0.739 |
+| MSD test | none | whole | 0.898 | 0.960 | 0.168 | 5.4 | 0.853 |
+| MNI-HISUB25, atlas box | none | whole | 0.853 | 0.848 | 0.257 | 5.7 | 0.637 |
+| MNI-HISUB25, atlas box | largest piece | whole | 0.859 | 0.859 | 0.221 | 4.9 | 0.718 |
+| MNI-HISUB25, MSD-style box | largest piece | whole | 0.862 | 0.865 | 0.162 | 3.4 | 0.758 |
+
+**Random position, 5-fold ensemble:**
+
+| Test set | Post-processing | Label | Dice | NSD (1 mm) | Abs. volume error (ml) | Rel. volume error (%) | ICC |
+|---|---|---|---:|---:|---:|---:|---:|
+| MSD test | none | anterior | 0.878 | 0.925 | 0.146 | 9.0 | 0.776 |
+| MSD test | none | posterior | 0.868 | 0.942 | 0.130 | 9.2 | 0.718 |
+| MSD test | none | whole | 0.898 | 0.958 | 0.196 | 6.4 | 0.800 |
+| MNI-HISUB25, atlas box | none | whole | 0.851 | 0.843 | 0.230 | 5.1 | 0.672 |
+| MNI-HISUB25, atlas box | largest piece | whole | 0.858 | 0.857 | 0.187 | 4.1 | 0.759 |
+| MNI-HISUB25, MSD-style box | largest piece | whole | 0.861 | 0.862 | 0.155 | 3.3 | 0.788 |
+
+**Which change brings the gain**, paired per case (Dice; MSD test is the mean of anterior and posterior):
+
+| Test set | 3D U-Net single run | 3D U-Net ensemble | Single → ensemble: better / worse, p | Random position ensemble | 3D U-Net ens. → random position ens.: better / worse, p |
+|---|---:|---:|---:|---:|---:|
+| MNI-HISUB25, atlas box | 0.811 | 0.853 | 48 / 2, < 0.001 | 0.851 | 17 / 33, 0.039 |
+| MNI-HISUB25, atlas box + largest piece | 0.840 | 0.859 | 44 / 6, < 0.001 | 0.858 | 24 / 26, 0.59 |
+| MNI-HISUB25, MSD-style box + largest piece | 0.843 | 0.862 | 45 / 5, < 0.001 | 0.861 | 19 / 31, 0.26 |
+| MSD test | 0.874 | 0.874 | 20 / 19, 0.93 | 0.873 | 17 / 22, 0.43 |
+
+- **Ensembling is the gain.** Averaging the five 3D U-Net fold models lifts plain external Dice from 0.811 to 0.853 (48 of 50 better). The averaged prediction has fewer stray islands (keeping only the largest piece adds 0.006 Dice to it, against 0.029 to the single run) and a less wide outline (median predicted/true volume 1.05, against 1.09).
+- **Random position training adds nothing on top.** The two ensembles are equal, or slightly in favour of the 3D U-Net ensemble on the plain box (0.853 vs 0.851, p = 0.04). The random position ensemble's volumes are a little closer externally (median ratio 1.03, ICC 0.672 vs 0.637), the 3D U-Net ensemble's in distribution (ICC 0.853 vs 0.800).
+- **In distribution nothing changes** (all p > 0.4).
+- **Best model:** the 3D U-Net 5-fold ensemble, by a small margin, with no extra training setting. The README still names the single run as the main model, and the API serves it by default.
+- **Not a clean external test:** several decisions (the random position experiment, the largest piece) were made after looking at the external errors, so these external numbers aren't fully independent.
 
 ## Experiments
 

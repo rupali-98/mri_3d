@@ -31,16 +31,22 @@ def enabled() -> bool:
     return mlflow is not None and os.environ.get("HIPPO_MLFLOW", "1") != "0"
 
 
+def inside_experiment(run_dir) -> bool:
+    """A fold folder (runs/baseline/fold2) or an ensemble folder (runs/baseline/ensemble), not an experiment."""
+    name = Path(run_dir).name
+    return name.startswith("fold") or name == "ensemble"
+
+
 def runs_root(run_dir) -> Path:
     """The folder holding all experiments (runs/): the parent of the experiment, also for a fold folder."""
     run = Path(run_dir).resolve()
-    return run.parent.parent if run.name.startswith("fold") else run.parent
+    return run.parent.parent if inside_experiment(run) else run.parent
 
 
 def experiment_name(run_dir) -> str:
-    """runs/baseline/fold2 -> baseline; runs/baseline -> baseline."""
+    """runs/baseline/fold2 -> baseline; runs/baseline/ensemble -> baseline; runs/baseline -> baseline."""
     run = Path(run_dir)
-    return run.parent.name if run.name.startswith("fold") else run.name
+    return run.parent.name if inside_experiment(run) else run.name
 
 
 def setup(root: Path) -> None:
@@ -66,7 +72,7 @@ def start(run_dir, run_id: str | None = None):
     """Start (or continue) the run folder's MLflow run and remember its id there."""
     run_dir = Path(run_dir)
     setup(runs_root(run_dir))
-    name = f"{experiment_name(run_dir)}/{run_dir.name}" if run_dir.name.startswith("fold") else run_dir.name
+    name = f"{experiment_name(run_dir)}/{run_dir.name}" if inside_experiment(run_dir) else run_dir.name
     active = None
     if run_id:
         try:  # continue the same MLflow run if it still exists

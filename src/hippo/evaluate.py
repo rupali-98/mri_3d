@@ -10,8 +10,11 @@ posterior can't be scored (NSD is undefined), so its Dice and NSD are left
 blank and it is left out of the summary, which lists it under "dropped".
 Its predicted volume is still written, and hippo.visualize still shows it.
 
+An ensemble folder (hippo.ensemble) is scored as one model: the fold models' probabilities averaged.
+
 Usage:
     python -m hippo.evaluate --run runs/baseline
+    python -m hippo.evaluate --run runs/random_trim/ensemble      # after python -m hippo.ensemble
 """
 from __future__ import annotations
 
@@ -24,10 +27,9 @@ import torch
 import yaml
 from monai.data import DataLoader, Dataset
 
-from . import defaults, tracking
+from . import defaults, ensemble, tracking
 from .data import eval_transforms
 from .metrics import LABELS, case_metrics, missing_parts, summarise
-from .model import build_model
 from .train import spacing_from_affine
 
 
@@ -42,9 +44,7 @@ def main(run_dir: str, split: str = "test", data_dir: str | None = None, out_dir
         cfg["data"]["split_file"] = str(Path(data_dir) / defaults.SPLIT_FILENAME)
     device = defaults.pick_device()
 
-    model = build_model(cfg).to(device)
-    model.load_state_dict(torch.load(run / "best.pt", map_location=device))
-    model.eval()
+    model = ensemble.load(run, device)  # one model, or the folds' averaged probabilities
 
     cases = json.loads(Path(cfg["data"]["split_file"]).read_text())[split]
     loader = DataLoader(Dataset(cases, eval_transforms(cfg["data"].get("normalize", "zscore"))), batch_size=1)

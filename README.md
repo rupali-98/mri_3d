@@ -70,7 +70,23 @@ More: [methods](docs/methods.md#training).
 
 So the boundary of the outline matters most. No case fails outright (worst external Dice 0.742).
 
-**Cross-validation** (pending): 5 folds per experiment, with Dice, HD95, NSD, absolute and relative volume error, ICC and a Bland–Altman plot per label. These will be added when training finishes.
+**All models compared** (whole hippocampus; cross-validation rows are mean ± SD over 5 fold models, each scored on the same test sets):
+
+| Model | MSD test Dice | MSD test NSD | External Dice, atlas box | External, largest piece | External, MSD-style box + largest piece |
+|---|---:|---:|---:|---:|---:|
+| 3D U-Net, single run (main model) | 0.897 | 0.959 | 0.811 | 0.840 | 0.843 |
+| 3D U-Net, 5-fold cross-validation | 0.897 ± 0.001 | 0.958 ± 0.001 | 0.831 ± 0.016 | 0.853 ± 0.004 | 0.858 ± 0.003 |
+| Random position, 5-fold cross-validation | 0.896 ± 0.001 | 0.955 ± 0.002 | 0.826 ± 0.011 | 0.853 ± 0.001 | 0.859 ± 0.001 |
+| **3D U-Net, 5-fold ensemble** (folds' probabilities averaged; one model) | 0.898 | 0.960 | **0.853** | 0.859 | 0.862 |
+| Random position, 5-fold ensemble (folds' probabilities averaged; one model) | 0.898 | 0.958 | 0.851 | 0.858 | 0.861 |
+
+In distribution all models are equal (MSD test, mean of anterior and posterior: 0.874 single run, 0.874 and 0.873 for the two ensembles). **Averaging the five fold models is what helps on external data**, not the random position training:
+
+- **3D U-Net single run → 3D U-Net ensemble:** plain external Dice 0.811 → 0.853, 48 of 50 hippocampi better (Wilcoxon p < 0.001). The averaged models leave fewer stray islands (keeping only the largest piece adds just 0.006 Dice to the ensemble, against 0.029 to the single run) and draw a less wide outline (median predicted/true volume 1.05 vs 1.09).
+- **3D U-Net ensemble vs random position ensemble:** equal, or slightly in favour of the 3D U-Net ensemble (plain box 0.853 vs 0.851, p = 0.04; with the largest piece p = 0.59). The random position model's advantage is its steadiness when the box moves (below), which ensembling already gives.
+- **Single runs carry chance:** the fold models score higher externally than the single run (0.831 ± 0.016 vs 0.811), so one run's external number can be off by about that much.
+
+NSD, volume errors, ICC and Bland–Altman plots per model, and the paired tests: [results](docs/results.md#cross-validation). NSD, volume errors, ICC and Bland–Altman plots per model: [results](docs/results.md#cross-validation).
 
 Full results, the per-part figure and all tables: [results](docs/results.md).
 
@@ -152,7 +168,7 @@ All limitations with numbers: [limitations](docs/limitations.md).
 ## Future work
 
 1. **Whole-hippocampus labels:** train on a dataset with whole-hippocampus labels on whole-head scans, using patch-based training for the GPU limit.
-2. **Finish cross-validation:** for the 3D U-Net and random position, with Dice, HD95, NSD, volume agreement and the ablation table.
+2. **Serve the 3D U-Net ensemble:** it is the best-scoring model (external 0.853, MSD unchanged); the API still serves the single run as its default.
 3. **Second external dataset:** a fresh one that stays untouched until the final model.
 4. **Uncertainty and quality flags:** to flag poor cases automatically, using the dropout the model already has.
 
@@ -172,7 +188,8 @@ All commands, the run folder contents and the project structure: [usage](docs/us
 
 1. **In distribution the model works well:** whole-hippocampus Dice 0.897 and NSD 0.959 on 39 held-out MSD cases.
 2. **Externally it drops to 0.811:** mainly because MSD's labels leave out tissue that the external labels include. An independent tool confirmed this.
-3. **Cropping fixes islands, not missing tissue:** cropping and position training remove islands, but the missed chunks stay the same (0.31 ml per hippocampus).
-4. **Next:** training labels that cover the whole hippocampus.
+3. **Averaging five fold models recovers part of it:** a 5-fold ensemble reaches 0.853 externally (48 of 50 better) with in-distribution results unchanged; random position training adds nothing on top.
+4. **Cropping fixes islands, not missing tissue:** cropping and position training remove islands, but the missed chunks stay the same (0.31 ml per hippocampus; not yet measured for the ensembles).
+5. **Next:** training labels that cover the whole hippocampus.
 
-Results on two small datasets and one training seed so far.
+Results on two small datasets; one seed per run, five folds per experiment.

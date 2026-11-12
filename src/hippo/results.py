@@ -210,7 +210,8 @@ def ablation_rows(root: str = "runs") -> list[dict]:
         if "experiment" not in params or not any(key in metrics for _, key, _ in ABLATION):
             continue  # a training run from before tracking, or a run not evaluated yet
         # a fold run and a single run of the same config (runs/baseline/fold0 and runs/baseline) are kept apart
-        kind = "single run" if params.get("fold", "none") == "none" else "cross-validation"
+        fold = params.get("fold", "none")
+        kind = {"none": "single run", "ensemble": "ensemble"}.get(fold, "cross-validation")
         groups.setdefault((params["experiment"], kind), []).append((params, metrics))
     rows = []
     for (experiment, kind), members in sorted(groups.items()):

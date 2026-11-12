@@ -68,7 +68,6 @@ No hyperparameter search was run: the settings above were fixed in advance and a
 
 - **Dice:** overlap between prediction and label (1 = identical, 0 = no overlap).
 - **NSD (1 mm):** share of the two outlines within 1 mm of each other, the MSD challenge's tolerance for this task, so results compare with published MSD numbers.
-- **HD95:** the 95th percentile of the distances between the two surfaces (mm).
 - **Volume:** absolute error (ml), relative error (% of the true volume), ICC(A,1) (absolute agreement) and a Bland–Altman plot.
 - **Labels:** per part (anterior, posterior) and for the whole hippocampus (labels merged). External data is scored as the whole hippocampus only, because its labels have no anterior/posterior parts.
 - Tools: `src/hippo/evaluate.py` (MSD test), `src/hippo/external.py` (external), `src/hippo/results.py` (table per experiment), `src/hippo/errors.py` (error analysis). Full analysis of the external data: [external_validation.md](external_validation.md).
