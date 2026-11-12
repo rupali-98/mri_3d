@@ -1,0 +1,14 @@
+# The API only (hippo.api, Dockerfile.api): no Streamlit, MLflow, Jupyter or plotting, to keep the image small.
+# Same versions as requirements.txt; torch is installed first from the CPU index (see Dockerfile.api).
+torch==2.14.1
+monai==1.6.1
+numpy==2.4.6
+scipy==1.17.1
+nibabel==5.4.2
+pyyaml==6.0.3
+configargparse==1.8.0
+
+# Web service
+fastapi==0.156.8
+uvicorn==0.54.0
+python-multipart==0.0.32               # file uploads in FastAPI

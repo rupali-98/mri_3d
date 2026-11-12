@@ -1,0 +1,8 @@
+# Build context for backend/Dockerfile only (BuildKit uses this instead of the root .dockerignore):
+# only what the API image copies, so scans, runs and local secrets can never end up in it.
+*
+!requirements-api.txt
+!src/hippo/
+!deploy/model/
+**/__pycache__/
+**/*.pyc

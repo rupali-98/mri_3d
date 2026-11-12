@@ -1,0 +1,24 @@
+# What `gcloud builds submit` uploads to Cloud Build: only the code backend/Dockerfile needs.
+# The model weights are not uploaded from here: the build fetches the registered model from MLflow's
+# artifact store in Cloud Storage (deploy/cloudbuild.yaml, hippo.register_model).
+# Never upload data/ or runs/: scans and labels stay on this machine.
+# Check before building:  gcloud meta list-files-for-upload
+*
+!backend/
+!backend/Dockerfile
+!backend/Dockerfile.dockerignore
+!requirements-api.txt
+!src/
+!src/hippo/
+!src/hippo/**
+!deploy/
+!deploy/cloudbuild.yaml
+# The upload page (webapp/Dockerfile, deploy/cloudbuild-webapp.yaml)
+!webapp/
+!webapp/Dockerfile
+!webapp/Dockerfile.dockerignore
+!requirements-webapp.txt
+!streamlit_dashboard/
+!streamlit_dashboard/upload_page.py
+!deploy/cloudbuild-webapp.yaml
+**/__pycache__/

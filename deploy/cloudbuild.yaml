@@ -1,0 +1,37 @@
+# Google Cloud Build: fetch the registered model from MLflow's artifact store (a Cloud Storage bucket),
+# build backend/Dockerfile (Linux/amd64, as Cloud Run needs) and push it to Artifact Registry.
+# Register the model first (hippo.register_model), then from the project root (docs/deployment.md):
+#     MODEL_URI=$(python -m hippo.register_model --show champion)
+#     VERSION=$(python -m hippo.register_model --show champion --field weights_version)
+#     gcloud builds submit --config deploy/cloudbuild.yaml \
+#         --substitutions _MODEL_URI=$MODEL_URI,_VERSION=$VERSION,_IMAGE=europe-west1-docker.pkg.dev/PROJECT_ID/hippo/api:$VERSION .
+# Only code is uploaded (.gcloudignore); the weights come from the bucket.
+steps:
+  - id: fetch-model
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        mkdir -p deploy/model
+        gcloud storage cp --recursive "${_MODEL_URI}/*" deploy/model/
+        ls -l deploy/model
+  # A separate step because the cloud-sdk image has no python3 (gcloud brings its own); this is the
+  # Dockerfile's base image, so it is usually cached
+  - id: check-version
+    name: python:3.11.17-slim-trixie
+    entrypoint: python3
+    args:
+      - -c
+      - |
+        import json, sys
+        found = json.load(open("deploy/model/metadata.json"))["version"]
+        if found != "${_VERSION}":
+            sys.exit(f"The model at ${_MODEL_URI} is version {found}, not ${_VERSION}: refusing to tag it wrongly")
+        print(f"Fetched model version {found} from ${_MODEL_URI}")
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "backend/Dockerfile", "-t", "${_IMAGE}", "."]
+images:
+  - "${_IMAGE}"

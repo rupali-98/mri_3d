@@ -106,3 +106,31 @@ def test_app_predicts_and_compares(tmp_path, monkeypatch):
     at.button[0].click().run()
     assert not at.exception and not at.error
     assert (tmp_path / "runs/figures/notebook/hippocampus_001_shifted_y-5_pred_baseline.nii.gz").exists()
+
+
+def test_fold_runs_and_their_average(tmp_path, monkeypatch):
+    make_fake_msd(tmp_path / "data", n=1)
+    cfg = yaml.safe_load(open("configs/baseline.yaml"))
+    cfg["model"]["channels"] = [8, 16, 32, 64]
+    for name in ("baseline", "baseline/fold0", "baseline/fold1", "other"):
+        run = tmp_path / "runs" / name
+        run.mkdir(parents=True)
+        (run / "config.yaml").write_text(yaml.safe_dump(cfg))
+        torch.save(build_model(cfg).state_dict(), run / "best.pt")
+    (tmp_path / "streamlit_dashboard").mkdir()
+    shutil.copy(APP, tmp_path / "streamlit_dashboard")
+    monkeypatch.chdir(tmp_path)
+
+    at = AppTest.from_file(str(tmp_path / "streamlit_dashboard" / "compare_slices.py"), default_timeout=60).run()
+    runs = at.multiselect[0]
+    assert runs.options == ["baseline", "baseline: 2-fold average", "baseline/fold0", "baseline/fold1", "other"]
+    assert runs.value == ["runs/baseline", "runs/baseline/folds-average", "runs/other"]   # single folds not ticked
+    at.selectbox(key="image").select("data/Task04_Hippocampus/imagesTr/hippocampus_000.nii.gz").run()
+    at.multiselect[0].set_value(["runs/baseline/folds-average", "runs/baseline/fold1"]).run()
+    at.button[0].click().run()
+    assert not at.exception and not at.error
+    text = " ".join(m.value for m in at.markdown)
+    assert "**baseline: 2-fold average: Dice whole" in text and "**baseline/fold1: Dice whole" in text
+    out = tmp_path / "runs/figures/notebook"
+    assert (out / "hippocampus_000_pred_baseline_2-fold_average.nii.gz").exists()
+    assert (out / "hippocampus_000_pred_baseline_fold1.nii.gz").exists()

@@ -1,6 +1,8 @@
 """hippo.metrics_plot reads both datasets' per-case metrics, plots them and writes a summary table."""
 import csv
 
+import pytest
+
 from hippo import metrics_plot
 
 
@@ -109,3 +111,36 @@ def test_external_shifted_group(tmp_path):
     assert list(scores) == ["external", "external_shifted"]
     assert list(scores["external_shifted"]["dice"].round(6)) == [0.6]
     metrics_plot.main([str(run)], str(tmp_path / "fig"))
+
+
+def _write_curve(run, dice):
+    for (condition, _), value in zip(metrics_plot.CURVE, dice):
+        write_csv(run / "shifted_external_largest" / condition / "metrics_external.csv",
+                  [{"case": "s01_L", "dice": value, "nsd": value - 0.1}, {"case": "s01_R", "dice": value, "nsd": value - 0.1}])
+
+
+def test_curve_figure_and_table(tmp_path):
+    _write_curve(tmp_path / "a", [0.9, 0.85, 0.8, 0.75, 0.7])
+    _write_curve(tmp_path / "b", [0.8, 0.8, 0.8, 0.8, 0.8])
+    out = tmp_path / "curve"
+    rows = metrics_plot.main([str(tmp_path / "a"), str(tmp_path / "b")], str(out), names=["A", "B"], curve=True)
+    assert out.with_suffix(".png").stat().st_size > 0
+    assert len(rows) == 2 * 2 * 5                                # 2 runs x 2 metrics x 5 positions
+    first = next(r for r in rows if r["run"] == "A" and r["metric"] == "dice" and r["position_mm"] == -10)
+    assert first["mean"] == 0.9 and first["n"] == 2
+
+
+def test_curve_needs_every_position(tmp_path):
+    _write_curve(tmp_path / "a", [0.9, 0.85, 0.8, 0.75, 0.7])
+    (tmp_path / "a/shifted_external_largest/z+10/metrics_external.csv").unlink()
+    with pytest.raises(SystemExit, match="No position curve"):
+        metrics_plot.main([str(tmp_path / "a")], str(tmp_path / "curve"), curve=True)
+
+
+def test_msd_crop_group_only_when_asked(tmp_path):
+    write_csv(tmp_path / "a/external_largest/metrics_external.csv", [{"case": "s01_L", "dice": 0.8, "nsd": 0.7}])
+    write_csv(tmp_path / "a/external_msd_crop_largest/metrics_external.csv", [{"case": "s01_L", "dice": 0.85, "nsd": 0.75}])
+    default = metrics_plot.main([str(tmp_path / "a")], str(tmp_path / "plain"))
+    assert {r["dataset"] for r in default} == {"external_largest"}
+    asked = metrics_plot.main([str(tmp_path / "a")], str(tmp_path / "asked"), datasets=["external_msd_crop_largest"], decimals=3)
+    assert {r["dataset"] for r in asked} == {"external_msd_crop_largest"}

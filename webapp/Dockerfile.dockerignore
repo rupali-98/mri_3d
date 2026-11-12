@@ -1,0 +1,8 @@
+# Build context for webapp/Dockerfile only: the page and the modules it uses, never data/, runs/ or keys.
+*
+!requirements-webapp.txt
+!src/hippo/__init__.py
+!src/hippo/api_client.py
+!src/hippo/examples.py
+!src/hippo/slices.py
+!streamlit_dashboard/upload_page.py

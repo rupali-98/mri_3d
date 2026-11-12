@@ -1,15 +1,20 @@
 """Evaluate a trained model on the held-out test split.
 
-Writes one row per case (Dice, NSD, predicted and true volumes) and a summary
-with mean and median per metric, the same statistics the MSD paper reports.
+Writes one row per case (Dice, NSD, HD95, predicted and true volumes; per part and for the whole
+hippocampus) and a summary with mean and median per metric, the same statistics the MSD paper
+reports, plus volume agreement per label (absolute and relative error, ICC, Bland-Altman bias and
+limits). The summary is also added to the run's MLflow run as test.<metric>_<label>.
 
 Every case is predicted. A case whose ground truth has no anterior or no
 posterior can't be scored (NSD is undefined), so its Dice and NSD are left
 blank and it is left out of the summary, which lists it under "dropped".
 Its predicted volume is still written, and hippo.visualize still shows it.
 
+An ensemble folder (hippo.ensemble) is scored as one model: the fold models' probabilities averaged.
+
 Usage:
     python -m hippo.evaluate --run runs/baseline
+    python -m hippo.evaluate --run runs/random_trim/ensemble      # after python -m hippo.ensemble
 """
 from __future__ import annotations
 
@@ -22,10 +27,9 @@ import torch
 import yaml
 from monai.data import DataLoader, Dataset
 
-from . import defaults
+from . import defaults, ensemble, tracking
 from .data import eval_transforms
-from .metrics import case_metrics, missing_parts
-from .model import build_model
+from .metrics import LABELS, case_metrics, missing_parts, summarise
 from .train import spacing_from_affine
 
 
@@ -40,9 +44,7 @@ def main(run_dir: str, split: str = "test", data_dir: str | None = None, out_dir
         cfg["data"]["split_file"] = str(Path(data_dir) / defaults.SPLIT_FILENAME)
     device = defaults.pick_device()
 
-    model = build_model(cfg).to(device)
-    model.load_state_dict(torch.load(run / "best.pt", map_location=device))
-    model.eval()
+    model = ensemble.load(run, device)  # one model, or the folds' averaged probabilities
 
     cases = json.loads(Path(cfg["data"]["split_file"]).read_text())[split]
     loader = DataLoader(Dataset(cases, eval_transforms(cfg["data"].get("normalize", "zscore"))), batch_size=1)
@@ -66,10 +68,16 @@ def main(run_dir: str, split: str = "test", data_dir: str | None = None, out_dir
     scored = [r for r in rows if r["case"] not in dropped]
     summary = {"n_cases": len(scored), "n_dropped": len(dropped), "dropped": dropped}
     for k in rows[0]:
-        if k.startswith(("dice", "nsd")) and scored:
-            vals = np.array([r[k] for r in scored])
-            summary[k] = {"mean": float(vals.mean()), "median": float(np.median(vals)), "std": float(vals.std())}
+        if k.startswith(("dice", "nsd", "hd95")) and scored:
+            vals = np.array([r[k] for r in scored])  # HD95 is nan where a prediction is empty
+            summary[k] = {"mean": float(np.nanmean(vals)), "median": float(np.nanmedian(vals)),
+                          "std": float(np.nanstd(vals))}
+    summary["by_label"] = {label: summarise(scored, f"_{label}") for label in LABELS}
     (out / f"summary_{split}.json").write_text(json.dumps(summary, indent=2))
+    name = tracking.result_name(run, out)
+    tracking.log_results(run, split if name == "" else f"{name}.{split}",
+                         {f"{k}_{label}": v for label, m in summary["by_label"].items() for k, v in m.items()},
+                         {"post_processing": "none", "split": split})
     print(json.dumps(summary, indent=2))
     if dropped:
         print(f"{len(dropped)} of {len(rows)} cases not scored (predictions still made): "

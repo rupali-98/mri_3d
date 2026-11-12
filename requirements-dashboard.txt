@@ -1,0 +1,15 @@
+# The Streamlit viewer only (frontend/Dockerfile): no MLflow, FastAPI, Jupyter or vedo.
+# Same versions as requirements.txt; torch is installed first from the CPU index (see the Dockerfile).
+torch==2.14.1
+monai==1.6.1
+numpy==2.4.6
+scipy==1.17.1
+scikit-image==0.26.0
+matplotlib==3.11.2
+nibabel==5.4.2
+pyyaml==6.0.3
+configargparse==1.8.0
+
+# Viewer
+plotly==7.1.0
+streamlit==1.66.1

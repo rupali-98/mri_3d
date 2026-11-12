@@ -24,7 +24,15 @@ streamlit==1.66.1                       # streamlit_dashboard/compare_slices.py 
 pyyaml==6.0.3
 configargparse==1.8.0
 mlflow==3.17.1
+google-cloud-storage==3.17.1             # MLflow artifacts in a gs:// bucket (hippo.register_model)
 pytest==9.1.1
+
+# Model API (hippo.api) and its tests; same versions as requirements-api.txt
+fastapi==0.156.8
+uvicorn==0.54.0
+python-multipart==0.0.32               # file uploads in FastAPI
+httpx==0.28.1                           # FastAPI's TestClient
+requests==2.34.2                        # hippo.api_client; same as requirements-webapp.txt
 
 # Notebooks
 jupyterlab==4.6.4

@@ -39,12 +39,22 @@ def load(image: Path, label: Path | None, normalize: str = "zscore") -> dict:
 
 
 @torch.no_grad()
-def predict(run: Path, image: torch.Tensor) -> np.ndarray:
-    cfg = yaml.safe_load((run / "config.yaml").read_text())
+def probabilities(run: Path, image: torch.Tensor) -> torch.Tensor:
+    """The run's class probabilities (softmax) for one preprocessed image: (classes, X, Y, Z)."""
+    cfg = yaml.safe_load((Path(run) / "config.yaml").read_text())
     model = build_model(cfg)
-    model.load_state_dict(torch.load(run / "best.pt", map_location="cpu", weights_only=True))
+    model.load_state_dict(torch.load(Path(run) / "best.pt", map_location="cpu", weights_only=True))
     model.eval()
-    return model(image[None]).argmax(1)[0].numpy()
+    return torch.softmax(model(image[None]), 1)[0]
+
+
+def predict(run: Path, image: torch.Tensor) -> np.ndarray:
+    return probabilities(run, image).argmax(0).numpy()
+
+
+def predict_average(runs: list[Path], image: torch.Tensor) -> np.ndarray:
+    """Average several runs' probabilities (e.g. the 5 fold models), then take the most likely label per voxel."""
+    return torch.stack([probabilities(run, image) for run in runs]).mean(0).argmax(0).numpy()
 
 
 def volumes_ml(mask: np.ndarray, spacing) -> dict:

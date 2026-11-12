@@ -193,3 +193,52 @@ def test_refuses_to_start_when_disk_is_full(tmp_path):
     cfg_path = small_config(tmp_path, min_free_disk_gb=10**9)
     with pytest.raises(SystemExit, match="GB free"):
         train.main(str(cfg_path), data_dir=str(tmp_path / "data"))
+
+
+def test_train_passes_random_trim_from_config(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    make_splits(make_fake_msd(data), data / "splits.json", 0.25, 0.25, seed=1)
+    cfg_path = small_config(tmp_path)
+    cfg = yaml.safe_load(cfg_path.read_text())
+    cfg["data"]["random_trim"] = [0, 0, 5]
+    cfg_path.write_text(yaml.safe_dump(cfg))
+
+    seen = []
+    real = train.make_loaders
+    monkeypatch.setattr(train, "make_loaders", lambda *a: seen.append(a[-1]) or real(*a))
+    train.main(str(cfg_path), data_dir=str(data))
+    assert seen == [[0, 0, 5]]
+    assert (tmp_path / "run" / "best.pt").exists()
+
+
+def test_fold_training_and_evaluation_share_one_mlflow_run(tmp_path, monkeypatch):
+    from hippo import results, tracking
+    from hippo.data import make_folds
+
+    monkeypatch.setenv("HIPPO_MLFLOW", "1")
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    data = tmp_path / "data"
+    make_splits(make_fake_msd(data), data / "splits.json", 0.25, 0.25, seed=1)
+    make_folds(data / "splits.json", 3, seed=1)
+    train.main(str(small_config(tmp_path)), data_dir=str(data), fold=1)
+    fold = tmp_path / "run" / "fold1"
+    cfg = yaml.safe_load((fold / "config.yaml").read_text())
+    assert cfg["data"]["fold"] == 1 and cfg["data"]["split_file"].endswith("folds/fold1.json")
+    evaluate.main(str(fold))
+
+    run = tracking.mlflow.get_run((fold / tracking.RUN_ID_FILE).read_text())
+    assert run.data.params["fold"] == "1" and run.data.params["experiment"] == "run"
+    assert "loss" in run.data.metrics and "test.dice_whole" in run.data.metrics      # training and test, one run
+    assert run.data.tags["test.post_processing"] == "none"
+    rows = results.ablation_rows(str(tmp_path))
+    assert [(r["experiment"], r["kind"], r["folds"]) for r in rows] == [("run", "cross-validation", 1)]
+    assert rows[0]["MSD test Dice, whole mean"] == pytest.approx(run.data.metrics["test.dice_whole"])
+
+
+def test_fold_needs_the_fold_files(tmp_path):
+    with pytest.raises(SystemExit, match="--folds"):
+        train.main(str(small_config(tmp_path)), data_dir=str(tmp_path), fold=0)
+
+
+def test_best_weights_follow_the_parts_not_the_whole():
+    assert train.selection_dice({"dice_anterior": 0.8, "dice_posterior": 0.6, "dice_whole": 0.99}) == pytest.approx(0.7)

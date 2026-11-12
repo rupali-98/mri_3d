@@ -1,8 +1,24 @@
+# Fallback for any build without its own docker/<service>/Dockerfile.dockerignore (those whitelist instead).
+# Never send scans, runs, environments or secrets to the Docker daemon.
 .git
+.github
+.DS_Store
 __pycache__
 *.pyc
+.pytest_cache
 .ipynb_checkpoints
+.venv/
 data/
+runs/
+mlruns/
+mlartifacts/
 *.nii
 *.nii.gz
 *.dcm
+*.db
+*.log
+deploy/model.zip
+.env
+secrets/
+.claude/
+.agents/

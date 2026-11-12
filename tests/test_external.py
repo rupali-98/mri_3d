@@ -216,7 +216,7 @@ def test_evaluate_largest_piece_writes_its_own_report(tmp_path):
     assert summary["post_processing"] == "largest piece only"
     assert not (run / "external").exists()                            # the plain results are not touched
     header = (run / "external_largest" / "metrics_external.csv").read_text().splitlines()[0]
-    assert header == "case,dice,nsd,vol_pred_ml,vol_true_ml,label_coverage,pieces,removed_ml"
+    assert header == "case,dice,nsd,hd95,vol_pred_ml,vol_true_ml,label_coverage,pieces,removed_ml"
 
 
 @pytest.mark.parametrize("normalize, expected", [("zscore", "zscore"), ("none", "none"), (None, "zscore")])

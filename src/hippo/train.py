@@ -1,14 +1,20 @@
 """Train the baseline 3D U-Net.
 
+The best weights are those with the highest mean of the anterior and posterior validation Dice.
+With --fold k, training uses fold k of the 5-fold split (data/folds/fold<k>.json from
+python -m hippo.data --folds 5): that fold validates, the other four train, and the MSD test split is
+never used. The run goes to <out_dir>/fold<k>/. Every run is logged to MLflow (src/hippo/tracking.py)
+with its config and fold; evaluations add their results to the same MLflow run.
+
 Usage:
     python -m hippo.train --config configs/baseline.yaml
     python -m hippo.train --config configs/baseline.yaml --resume   # continue an interrupted run
+    python -m hippo.train --config configs/baseline.yaml --fold 0   # one fold of the cross-validation
 """
 from __future__ import annotations
 
 import contextlib
 import json
-import os
 import shutil
 import time
 from pathlib import Path
@@ -19,15 +25,11 @@ import yaml
 from monai.losses import DiceCELoss
 from monai.utils import set_determinism
 
-from . import defaults
-from .data import make_loaders, use_clean_labels
+from . import CLASS_NAMES, defaults, tracking
+from .data import fold_file, make_loaders, use_clean_labels
 from .metrics import case_metrics
 from .model import build_model
-
-try:
-    import mlflow
-except ImportError:  # MLflow is optional; training works without it.
-    mlflow = None
+from .tracking import mlflow
 
 
 def spacing_from_affine(affine) -> tuple:
@@ -44,7 +46,12 @@ def validate(model, loader, device, nsd_tol: float) -> dict:
         pred = model(img).argmax(dim=1, keepdim=True)
         rows.append(case_metrics(pred.cpu(), lbl.cpu(), spacing_from_affine(batch["image"].affine), nsd_tol))
     keys = rows[0].keys()
-    return {k: float(np.mean([r[k] for r in rows])) for k in keys if k.startswith(("dice", "nsd"))}
+    return {k: float(np.nanmean([r[k] for r in rows])) for k in keys if k.startswith(("dice", "nsd"))}
+
+
+def selection_dice(val: dict) -> float:
+    """What picks best.pt: the mean of the anterior and posterior validation Dice (not the whole hippocampus)."""
+    return float(np.mean([val[f"dice_{name}"] for name in CLASS_NAMES.values()]))
 
 
 def save_atomic(obj, path: Path) -> None:
@@ -64,25 +71,21 @@ def check_disk(path: Path, min_free_gb: float) -> None:
         )
 
 
-def setup_mlflow(out: Path) -> None:
-    """Keep MLflow data next to the runs (git-ignored) unless MLFLOW_TRACKING_URI says otherwise."""
-    root = out.resolve().parent
-    if not os.environ.get("MLFLOW_TRACKING_URI"):
-        mlflow.set_tracking_uri(f"sqlite:///{(root / 'mlflow.db').as_posix()}")
-    name = os.environ.get("MLFLOW_EXPERIMENT_NAME", "hippo")
-    if mlflow.get_experiment_by_name(name) is None:
-        mlflow.create_experiment(name, artifact_location=(root / "mlartifacts").as_uri())
-    mlflow.set_experiment(name)
-
-
 def main(
     cfg_path: str,
     max_epochs: int | None = None,
     data_dir: str = defaults.DATA_DIR,
     resume: bool = False,
+    fold: int | None = None,
 ) -> dict:
     cfg = yaml.safe_load(Path(cfg_path).read_text())
     cfg["data"]["split_file"] = str(Path(data_dir) / defaults.SPLIT_FILENAME)
+    if fold is not None:
+        split = fold_file(data_dir, fold)
+        if not split.exists():
+            raise SystemExit(f"{split} not found: run python -m hippo.data --folds 5 first")
+        cfg["data"]["split_file"], cfg["data"]["fold"] = str(split), fold
+        cfg["train"]["out_dir"] = str(Path(cfg["train"]["out_dir"]) / f"fold{fold}")
     t = cfg["train"]
     epochs = max_epochs or t["epochs"]
     set_determinism(seed=t["seed"])
@@ -103,8 +106,9 @@ def main(
     elif labels != "raw":
         raise SystemExit(f"data.labels must be raw or clean, not {labels!r}")
     normalize = cfg["data"].get("normalize", "zscore")  # runs from before this setting used zscore
+    random_trim = cfg["data"].get("random_trim")  # runs from before this setting had no trimming
     train_loader, val_loader = make_loaders(
-        splits, t["batch_size"], cfg["data"]["num_workers"], cfg["data"]["cache_rate"], normalize
+        splits, t["batch_size"], cfg["data"]["num_workers"], cfg["data"]["cache_rate"], normalize, random_trim
     )
 
     model = build_model(cfg).to(device)
@@ -128,19 +132,13 @@ def main(
     elif resume:
         print(f"No checkpoint in {out}; starting from scratch")
 
-    run = contextlib.nullcontext()
-    if mlflow:
-        setup_mlflow(out)
-        try:  # continue the same MLflow run if it still exists
-            run = mlflow.start_run(run_id=run_id) if run_id else mlflow.start_run(run_name=out.name)
-        except Exception:
-            run = mlflow.start_run(run_name=out.name)
+    logging = tracking.enabled()
+    run = tracking.start(out, run_id) if logging else contextlib.nullcontext()
     with run:
-        if mlflow:
+        if logging:
             run_id = mlflow.active_run().info.run_id
             if start_epoch == 1:
-                mlflow.log_params({**cfg["model"], **{k: v for k, v in t.items() if k != "out_dir"},
-                                   "labels": labels, "normalize": normalize})
+                mlflow.log_params(tracking.config_params(cfg, out))
         for epoch in range(start_epoch, epochs + 1):
             # Reseed shuffling, augmentation and dropout from the epoch number, so a
             # resumed run sees exactly the batches an uninterrupted run would have.
@@ -163,13 +161,13 @@ def main(
             if epoch % t["val_every"] == 0 or epoch == epochs:
                 val = validate(model, val_loader, device, cfg["eval"]["nsd_tolerance_mm"])
                 entry.update(val)
-                mean_dice = np.mean([v for k, v in val.items() if k.startswith("dice")])
-                entry["mean_dice"] = float(mean_dice)
+                mean_dice = selection_dice(val)
+                entry["mean_dice"] = mean_dice
                 if mean_dice > best:
                     best = mean_dice
                     torch.save(model.state_dict(), out / "best.pt")
-            if mlflow:
-                mlflow.log_metrics({k: v for k, v in entry.items() if k != "epoch"}, step=epoch)
+            if logging:
+                mlflow.log_metrics({k: v for k, v in entry.items() if k != "epoch" and np.isfinite(v)}, step=epoch)
             history.append(entry)
             print(json.dumps(entry))
             (out / "history.json").write_text(json.dumps(history, indent=2))
@@ -189,7 +187,7 @@ def main(
 
         torch.save(model.state_dict(), out / "last.pt")
         ckpt_path.unlink(missing_ok=True)
-        if mlflow:
+        if logging:
             mlflow.log_artifacts(str(out))
     print(f"Best validation mean Dice: {best:.4f}")
     return {"best_mean_dice": best, "history": history}
@@ -200,5 +198,7 @@ if __name__ == "__main__":
     p.add_argument("--config", default=defaults.CONFIG, help="Experiment settings (YAML)")
     p.add_argument("--epochs", type=int, default=None, help="Override epochs (e.g. for a quick test)")
     p.add_argument("--resume", action="store_true", help="Continue from checkpoint.pt in the run folder")
+    p.add_argument("--fold", type=int, help="Train fold k of data/folds/ (python -m hippo.data --folds 5); "
+                                            "the run goes to <out_dir>/fold<k>/")
     a = p.parse_args()
-    main(a.config, a.epochs, a.data_dir, a.resume)
+    main(a.config, a.epochs, a.data_dir, a.resume, a.fold)
